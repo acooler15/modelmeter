@@ -29,7 +29,7 @@ export default defineConfig({
     proxy: {
       // 开发期后端 API 代理,浏览器始终不直连 LLM 服务
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8422',
         changeOrigin: true,
       },
     },

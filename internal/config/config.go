@@ -8,7 +8,7 @@ import (
 
 // Config 服务运行配置,全部来自环境变量,启动时一次性解析。
 type Config struct {
-	Port      int    // HTTP 监听端口,默认 8080
+	Port      int    // HTTP 监听端口,默认 8422(避开 8080 等常用端口)
 	DataDir   string // SQLite 数据目录,默认 data
 	LogLevel  string // 日志级别:debug/info/warn/error,默认 info
 	LogFormat string // 日志格式:json/text,默认 json
@@ -17,7 +17,7 @@ type Config struct {
 // Load 读取环境变量并填充配置;非法取值回退默认值,保证服务总能启动。
 func Load() Config {
 	cfg := Config{
-		Port:      8080,
+		Port:      8422,
 		DataDir:   "data",
 		LogLevel:  "info",
 		LogFormat: "json",

@@ -34,7 +34,7 @@ web/
 │   ├── App.vue
 │   └── main.ts           # 装配:Pinia、router、Element Plus、全局样式
 ├── index.html
-├── vite.config.ts        # dev 代理 /api → localhost:8080;build.outDir 默认 dist
+├── vite.config.ts        # dev 代理 /api → localhost:8422;build.outDir 默认 dist
 ├── tsconfig.json         # strict: true
 └── package.json
 ```

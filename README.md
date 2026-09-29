@@ -61,7 +61,7 @@ ModelMeter 用于集中管理多个 LLM 服务接口(Base URL + API Key,可持�
 
 ### 非功能需求
 
-- **部署**:单个静态二进制,一行命令启动,默认监听 `:8080`。
+- **部署**:单个静态二进制,一行命令启动,默认监听 `:8422`。
 - **存储**:本地 SQLite(`data/` 目录),不依赖外部数据库。
 - **安全**:API Key 仅本地保存、界面脱敏、不进日志;后续可考虑静态加密。
 - **界面**:全中文。
@@ -87,11 +87,11 @@ cd ..
 
 # 2. 启动服务(单进程同时提供 API 与页面)
 go run ./cmd/server
-# 浏览器访问 http://localhost:8080
+# 浏览器访问 http://localhost:8422
 ```
 
-- **开发模式**:终端 A 运行 `go run ./cmd/server`,终端 B 运行 `cd web && npm run dev`;Vite 已把 `/api` 代理到 `:8080`,前端热更新无需重新编译。
-- **环境变量**:`PORT`(默认 8080)、`DATA_DIR`(默认 data)、`LOG_LEVEL`(默认 info)、`LOG_FORMAT`(json/text,默认 json)。
+- **开发模式**:终端 A 运行 `go run ./cmd/server`,终端 B 运行 `cd web && npm run dev`;Vite 已把 `/api` 代理到 `:8422`,前端热更新无需重新编译。
+- **环境变量**:`PORT`(默认 8422)、`DATA_DIR`(默认 data)、`LOG_LEVEL`(默认 info)、`LOG_FORMAT`(json/text,默认 json)。
 - **检查与测试**:`go test ./...`、`go vet ./...`;前端 `cd web && npm run lint && npm run build`(含 vue-tsc 类型检查)。
 - **数据**:SQLite 文件位于 `data/modelmeter.db`,已 gitignore,删除即重置。
 
