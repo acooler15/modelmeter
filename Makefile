@@ -1,6 +1,6 @@
 .PHONY: dev-backend dev-frontend build test lint clean
 
-# 前端开发服务器(vite,/api 已代理到 localhost:8080)
+# 前端开发服务器(vite,/api 已代理到 localhost:8422)
 dev-frontend:
 	cd web && npm run dev
 
@@ -15,8 +15,8 @@ build:
 
 # 后端测试 + 前端 lint + 类型检查构建
 test:
-	go test ./...
-	go vet ./...
+	go test ./internal/... ./cmd/...
+	go vet ./internal/... ./cmd/...
 	cd web && npm run lint
 	cd web && npm run build
 
