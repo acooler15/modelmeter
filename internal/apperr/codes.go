@@ -33,3 +33,11 @@ const (
 	CodeUpstreamRequestFailed = 2500 // 上游请求失败(非 401/403 的非 2xx 状态码)
 	CodeUpstreamParseFailed   = 2502 // 上游响应解析失败(响应体不符合所选协议结构)
 )
+
+// New API 费率类错误码:3xxx 段,细分与文案见任务 design.md。
+const (
+	CodeNewAPINotConfigured = 3401 // New API 配置缺失或不完整(地址/令牌未配置)
+	CodeNewAPINetwork       = 3500 // 无法连接 New API 服务(连接失败/超时/DNS/TLS)
+	CodeNewAPIAuth          = 3501 // New API 鉴权失败(HTTP 401/403)
+	CodeNewAPIBadResponse   = 3502 // New API 响应异常(非 2xx 状态码或解析失败)
+)

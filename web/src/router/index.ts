@@ -32,6 +32,12 @@ const router = createRouter({
           component: () => import('@/views/test/ModelTestView.vue'),
           meta: { title: '模型测试' },
         },
+        {
+          path: 'rates',
+          name: 'rates',
+          component: () => import('@/views/rate/RateView.vue'),
+          meta: { title: '模型费率' },
+        },
       ],
     },
     // 未匹配路径统一回到首页

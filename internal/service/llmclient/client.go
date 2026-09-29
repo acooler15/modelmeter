@@ -47,16 +47,52 @@ func BuildURL(base, path string) string {
 	return b + path
 }
 
+// ErrCodes 上游错误归类的参数化配置:不同上游(模型站点、New API 网关)
+// 使用各自资源分段的业务错误码,中文文案模板共用。
+type ErrCodes struct {
+	Network     int    // 网络类错误(连接失败/超时/DNS/TLS)的业务码
+	Auth        int    // 鉴权失败(HTTP 401/403)的业务码
+	BadResponse int    // 其余非 2xx 状态码或 JSON 解析失败的业务码
+	ServiceName string // 文案中的服务名,如「上游服务」「New API 服务」
+	AuthHint    string // 鉴权失败文案中的凭据名称,如「API Key」「New API 访问令牌」
+}
+
+// UpstreamCodes 1xxx 段上游访问类错误码组:模型列表与模型测试共用,
+// 也是 GetJSON 的默认行为(文案与历史版本保持一致)。
+var UpstreamCodes = ErrCodes{
+	Network:     apperr.CodeUpstreamNetwork,
+	Auth:        apperr.CodeUpstreamAuth,
+	BadResponse: apperr.CodeUpstreamBadResponse,
+	ServiceName: "上游服务",
+	AuthHint:    "API Key",
+}
+
 // GetJSON 以 Bearer 鉴权请求上游 GET 接口,并把 JSON 响应解析到 out。
-// 错误归类(父任务 design.md 错误码分段):
+// 错误按 1xxx 段上游错误码归类(等价于 GetJSONWithCodes 的默认码组):
 //   - 网络类(连接失败/超时/DNS/TLS)→ CodeUpstreamNetwork;
 //   - HTTP 401/403 → CodeUpstreamAuth;
 //   - 其余非 2xx 状态码或 JSON 解析失败 → CodeUpstreamBadResponse。
 func GetJSON(ctx context.Context, cfg UpstreamConfig, path string, out any) error {
+	return GetJSONWithCodes(ctx, cfg, path, out, UpstreamCodes)
+}
+
+// GetJSONWithCodes 是 GetJSON 的参数化版本:错误码与文案由 codes 决定,
+// 供不同上游分段(如 New API 3xxx 段)复用同一套请求与归类逻辑。
+func GetJSONWithCodes(ctx context.Context, cfg UpstreamConfig, path string, out any, codes ErrCodes) error {
+	// 服务名缺省回退为通用「上游服务」,保证零值码组也能给出可读文案
+	name := codes.ServiceName
+	if name == "" {
+		name = "上游服务"
+	}
+	hint := codes.AuthHint
+	if hint == "" {
+		hint = "API Key"
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, BuildURL(cfg.BaseURL, path), nil)
 	if err != nil {
 		// 配置创建时已校验 URL 格式,走到这里说明存量数据异常,按网络类处理
-		return apperr.Wrap(apperr.CodeUpstreamNetwork, "无法连接上游服务:上游地址不合法", err)
+		return apperr.Wrap(codes.Network, "无法连接"+name+":上游地址不合法", err)
 	}
 	// API Key 只进入请求头,不进任何日志与错误消息
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
@@ -68,7 +104,7 @@ func GetJSON(ctx context.Context, cfg UpstreamConfig, path string, out any) erro
 		if ctx.Err() != nil {
 			return err
 		}
-		return apperr.Wrap(apperr.CodeUpstreamNetwork, "无法连接上游服务:"+describeNetErr(err), err)
+		return apperr.Wrap(codes.Network, "无法连接"+name+":"+describeNetErr(err), err)
 	}
 	defer func() {
 		// 读取失败时也需要关闭连接;关闭错误不影响业务结果,可安全忽略
@@ -77,13 +113,13 @@ func GetJSON(ctx context.Context, cfg UpstreamConfig, path string, out any) erro
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return apperr.New(apperr.CodeUpstreamAuth, "鉴权失败,请检查 API Key")
+			return apperr.New(codes.Auth, "鉴权失败,请检查 "+hint)
 		}
-		return apperr.New(apperr.CodeUpstreamBadResponse, fmt.Sprintf("上游服务返回异常(HTTP %d)", resp.StatusCode))
+		return apperr.New(codes.BadResponse, fmt.Sprintf("%s返回异常(HTTP %d)", name, resp.StatusCode))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return apperr.Wrap(apperr.CodeUpstreamBadResponse, "上游响应解析失败,结构不符合预期", err)
+		return apperr.Wrap(codes.BadResponse, name+"响应解析失败,结构不符合预期", err)
 	}
 	return nil
 }

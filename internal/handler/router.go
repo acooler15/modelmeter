@@ -35,5 +35,12 @@ func NewRouter(db *gorm.DB) *gin.Engine {
 	t.GET("/records", TestRecords(db))
 	t.DELETE("/records", TestRecordsClear(db))
 
+	// New API 模型费率:配置查询/保存、费率拉取与成本估算
+	n := api.Group("/newapi")
+	n.GET("/config", NewAPIConfigGet(db))
+	n.PUT("/config", NewAPIConfigSave(db))
+	n.GET("/rates", NewAPIRates(db))
+	n.POST("/estimate", NewAPIEstimate(db))
+
 	return r
 }

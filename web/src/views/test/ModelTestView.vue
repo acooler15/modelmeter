@@ -7,10 +7,12 @@ import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 
 import { fetchModels } from '@/api/modelCatalog'
+import { estimateCost } from '@/api/newapi'
 import { clearRecords, fetchRecords, runTest } from '@/api/modelTest'
 import { useRequest } from '@/composables/useRequest'
 import { isAbortError, useTestStream } from '@/composables/useTestStream'
 import { useProvidersStore } from '@/stores/providers'
+import type { CostEstimate } from '@/types/newapi'
 import type { TestProtocol, TestRecord, TestResult } from '@/types/test'
 
 const router = useRouter()
@@ -83,6 +85,27 @@ const result = ref<TestResult | null>(null)
 // 流式过程中展示增量,结束后展示最终回复(两者内容一致)
 const currentReply = computed(() => result.value?.reply ?? streamingReply.value)
 
+// 成本估算:测试成功且有用量时按 New API 费率估算单次成本。
+// 估算只是结果区的增强展示,任何失败都静默降级(后端亦以 available=false
+// 返回 code=0),因此不走 useRequest 的统一错误提示,避免测试页弹无关报错。
+const costEstimate = ref<CostEstimate | null>(null)
+let estimateSeq = 0
+
+/** 拉取单次成本估算;未配置/未命中/失败时保持 null,结果区不显示成本行。 */
+async function refreshEstimate(model: string, finished: TestResult) {
+  const seq = ++estimateSeq
+  costEstimate.value = null
+  const { prompt, completion } = finished.usage
+  if (prompt <= 0 && completion <= 0) return // 上游未返回用量,无从估算
+  try {
+    const data = await estimateCost(model, prompt, completion)
+    if (seq !== estimateSeq) return // 期间已发起新测试,丢弃过期结果
+    if (data.available && data.estimate) costEstimate.value = data.estimate
+  } catch {
+    // 估算请求本身失败(如后端不可达)同样按「无成本行」处理,不打扰用户
+  }
+}
+
 /** 发送测试;结束后刷新记录列表(失败也落库,同样需要刷新)。 */
 async function handleSend() {
   if (form.providerId === null) {
@@ -100,6 +123,7 @@ async function handleSend() {
 
   result.value = null
   streamingReply.value = ''
+  costEstimate.value = null
   try {
     if (form.stream) {
       const outcome = await startStream(
@@ -132,6 +156,8 @@ async function handleSend() {
       // 失败时 useRequest 已弹中文提示,这里只接成功分支
       if (data) result.value = data.result
     }
+    // 测试成功后尝试成本估算;失败静默,不影响测试结果展示
+    if (result.value) void refreshEstimate(form.model.trim(), result.value)
   } catch (e) {
     if (isAbortError(e)) {
       ElMessage.info('已停止本次测试')
@@ -326,8 +352,12 @@ onMounted(() => {
           <el-descriptions-item label="Tokens(输入/输出/总计)">
             {{ usageText(result.usage.prompt, result.usage.completion, result.usage.total) }}
           </el-descriptions-item>
+          <!-- 成本行只在费率命中时出现;未配置/未命中/失败都不显示、不报错 -->
+          <el-descriptions-item v-if="costEstimate" label="估算成本" :span="3">
+            <span class="cost-value">约 ${{ costEstimate.usd.toFixed(6) }}</span>
+            <span class="cost-formula">{{ costEstimate.formula }}</span>
+          </el-descriptions-item>
         </el-descriptions>
-        <div class="cost-hint">费用:待模型费率功能接入后计算</div>
       </template>
     </el-card>
 
@@ -506,7 +536,13 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
-.cost-hint {
+.cost-value {
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+
+.cost-formula {
+  margin-left: 12px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
 }
