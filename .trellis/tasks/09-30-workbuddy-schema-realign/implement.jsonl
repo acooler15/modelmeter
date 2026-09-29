@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-30-workbuddy-schema-realign/research.md", "reason": "本任务勘探依据:WorkBuddy app.asar 提取的 models.json 权威 schema、双文件形态、字段缺省语义、凭据零接触红线"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "后端分层与命名约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "apperr 业务错误与统一信封(4402/4403/4404 沿用)"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "slog 约定,日志禁记凭据与配置值"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端禁止/必须模式与测试要求(禁止裸 go test ./...)"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有封装(backup/WriteJSONFile/FieldSpec/treeutil 辅助/collectEfforts 并集模式)"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流一致性检查(列键/错误码/提示文案)"}

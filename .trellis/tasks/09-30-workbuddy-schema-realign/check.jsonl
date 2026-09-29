@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/09-30-workbuddy-schema-realign/research.md", "reason": "核对实现与勘探结论一致:目标文件、白名单字段集、双形态写回零丢失、canDisableThinking 缺省 true、凭据零接触"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端禁止/必须模式与全量检查命令"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层 json 字段名/错误码/提示一致性检查"}

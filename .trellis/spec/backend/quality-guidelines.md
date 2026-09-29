@@ -44,6 +44,11 @@
   标记(如 ZCode 的 `schemaVersion`),存在但不识别时拒绝读写,防版本
   漂移写坏文件;标记缺失则容忍(残缺文件仍可救)。参考实现见 agentconf
   的 `agents/treeutil.go`(读树+白名单改键+兄弟键保留)。
+  目标文件存在多种合法顶层形态时(如 WorkBuddy models.json 的裸数组与
+  `{models, availableModels}` 对象形态,以目标工具存储层代码为准),读侧
+  两种形态同等解析,写侧必须保持原形态——即便目标工具自己会把某形态
+  重写成另一形态,编辑工具也要更保守,形态载体上的字段(如
+  availableModels)才不会凭空丢失。
   > **例外**:「未知键原样保留」不适用于目标工具 schema 声明 `.strict()`
   > 的节点(如 ZCode 的 `defaultModelSelection`)——此类节点整体替换为
   > 规范形状,节点内未知键会让目标工具拒载整份配置,保留坏键与零丢失
