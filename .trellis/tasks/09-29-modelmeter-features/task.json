@@ -1,0 +1,32 @@
+{
+  "id": "modelmeter-features",
+  "name": "modelmeter-features",
+  "title": "ModelMeter 功能实现(P0+P1)",
+  "description": "父任务:统筹 README 功能需求 P0×4 与 P1×2 的实现,持有需求集、任务地图、共享技术设计与跨子任务验收标准",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "acooler15",
+  "assignee": "acooler15",
+  "createdAt": "2026-09-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-29-interface-config",
+    "09-29-model-list",
+    "09-29-model-test",
+    "09-29-newapi-rates",
+    "09-29-agent-config"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
