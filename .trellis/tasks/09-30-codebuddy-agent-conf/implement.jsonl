@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-30-codebuddy-agent-conf/research.md", "reason": "本任务勘探依据:CodeBuddy IDE 程序代码提取的 models.json 权威 schema、仅对象形态、字段缺省语义、凭据零接触红线"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "后端分层与命名约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "apperr 业务错误与统一信封(4402/4403/4404 沿用)"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "slog 约定,日志禁记凭据与配置值"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端禁止/必须模式与测试要求"}
