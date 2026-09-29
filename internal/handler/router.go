@@ -9,7 +9,8 @@ import (
 
 // NewRouter 装配中间件与 API 路由并返回 gin 引擎。
 // 横切中间件统一在此注册;SPA 托管由 internal/web 在 main.go 中另行挂载。
-func NewRouter(db *gorm.DB) *gin.Engine {
+// dataDir 为运行数据目录,供 Agent 配置的备份/还原使用。
+func NewRouter(db *gorm.DB, dataDir string) *gin.Engine {
 	r := gin.New()
 	r.Use(
 		middleware.RequestID(),
@@ -41,6 +42,13 @@ func NewRouter(db *gorm.DB) *gin.Engine {
 	n.PUT("/config", NewAPIConfigSave(db))
 	n.GET("/rates", NewAPIRates(db))
 	n.POST("/estimate", NewAPIEstimate(db))
+
+	// Agent 模型配置:列表/详情/写回/还原(写回前自动备份,备份目录由 dataDir 决定)
+	a := api.Group("/agents")
+	a.GET("", AgentList())
+	a.GET("/:name", AgentGet())
+	a.PUT("/:name", AgentApply(dataDir))
+	a.POST("/:name/restore", AgentRestore(dataDir))
 
 	return r
 }

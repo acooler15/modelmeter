@@ -36,7 +36,8 @@ func main() {
 
 	db := mustOpenDB(cfg)
 
-	r := handler.NewRouter(db)
+	// dataDir 供 Agent 配置的备份/还原使用(备份落在 dataDir/agent-backups/)
+	r := handler.NewRouter(db, cfg.DataDir)
 	web.Register(r)
 
 	srv := &http.Server{

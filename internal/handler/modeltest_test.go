@@ -28,7 +28,7 @@ func newHandlerTestEnv(t *testing.T, upstreamURL string) (*gin.Engine, *gorm.DB)
 	if err := db.Create(&model.Provider{Name: "假配置", BaseURL: upstreamURL, APIKey: "sk-handler-test"}).Error; err != nil {
 		t.Fatalf("创建测试配置失败: %v", err)
 	}
-	return NewRouter(db), db
+	return NewRouter(db, t.TempDir()), db
 }
 
 // sseFrames 把 SSE 响应体按空行切帧,去掉 "data: " 前缀后反序列化为 map。

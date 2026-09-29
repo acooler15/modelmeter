@@ -41,3 +41,11 @@ const (
 	CodeNewAPIAuth          = 3501 // New API 鉴权失败(HTTP 401/403)
 	CodeNewAPIBadResponse   = 3502 // New API 响应异常(非 2xx 状态码或解析失败)
 )
+
+// Agent 配置类错误码:4xxx 段,细分与文案见任务 design.md。
+const (
+	CodeAgentUnknown  = 4401 // 不支持的 Agent 名称
+	CodeAgentFileIO   = 4402 // 配置文件读取/写回/备份失败,或内容不是合法 JSON
+	CodeAgentInvalid  = 4403 // 提交的配置值非法(必填缺失、不在可选项内等)
+	CodeAgentNotFound = 4404 // 配置文件不存在(含无备份可还原)
+)

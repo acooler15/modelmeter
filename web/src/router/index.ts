@@ -38,6 +38,12 @@ const router = createRouter({
           component: () => import('@/views/rate/RateView.vue'),
           meta: { title: '模型费率' },
         },
+        {
+          path: 'agents',
+          name: 'agents',
+          component: () => import('@/views/agent/AgentView.vue'),
+          meta: { title: 'Agent 配置' },
+        },
       ],
     },
     // 未匹配路径统一回到首页
