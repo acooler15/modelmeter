@@ -76,7 +76,24 @@ ModelMeter 用于集中管理多个 LLM 服务接口(Base URL + API Key,可持�
 
 ## 快速开始
 
-待第一版代码落地后补充:环境依赖、构建命令、运行方式。
+环境依赖:Go 1.22+、Node.js 20+(含 npm)。
+
+```bash
+# 1. 构建前端产物(首次需先安装依赖)
+cd web
+npm install
+npm run build
+cd ..
+
+# 2. 启动服务(单进程同时提供 API 与页面)
+go run ./cmd/server
+# 浏览器访问 http://localhost:8080
+```
+
+- **开发模式**:终端 A 运行 `go run ./cmd/server`,终端 B 运行 `cd web && npm run dev`;Vite 已把 `/api` 代理到 `:8080`,前端热更新无需重新编译。
+- **环境变量**:`PORT`(默认 8080)、`DATA_DIR`(默认 data)、`LOG_LEVEL`(默认 info)、`LOG_FORMAT`(json/text,默认 json)。
+- **检查与测试**:`go test ./...`、`go vet ./...`;前端 `cd web && npm run lint && npm run build`(含 vue-tsc 类型检查)。
+- **数据**:SQLite 文件位于 `data/modelmeter.db`,已 gitignore,删除即重置。
 
 ## 文档导航
 
