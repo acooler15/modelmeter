@@ -28,5 +28,12 @@ func NewRouter(db *gorm.DB) *gin.Engine {
 	p.DELETE("/:id", ProviderDelete(db))
 	p.GET("/:id/models", ProviderModels(db))
 
+	// 模型测试:非流式/流式入口 + 记录查询/清空
+	t := api.Group("/test")
+	t.POST("", TestRun(db))
+	t.POST("/stream", TestStream(db))
+	t.GET("/records", TestRecords(db))
+	t.DELETE("/records", TestRecordsClear(db))
+
 	return r
 }

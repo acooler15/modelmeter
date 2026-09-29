@@ -103,7 +103,7 @@ func mustOpenDB(cfg config.Config) *gorm.DB {
 	}
 	// 表结构变更走启动时 AutoMigrate;新增模型必须在此登记
 	// (见 .trellis/spec/backend/database-guidelines.md)
-	if err := db.AutoMigrate(&model.Provider{}); err != nil {
+	if err := db.AutoMigrate(&model.Provider{}, &model.TestRecord{}); err != nil {
 		slog.Error("数据库迁移失败", "err", err)
 		os.Exit(1)
 	}

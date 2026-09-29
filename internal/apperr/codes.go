@@ -25,3 +25,11 @@ const (
 	CodeUpstreamAuth        = 1501 // 上游鉴权失败(HTTP 401/403)
 	CodeUpstreamBadResponse = 1502 // 上游响应异常(非 2xx 状态码或解析失败)
 )
+
+// 模型测试类错误码:2xxx 段。上游网络/鉴权错误沿用 1500/1501,
+// 使模型测试与模型列表对同类故障的提示保持一致。
+const (
+	CodeTestInvalid           = 2401 // 测试参数缺失或非法(协议不支持、模型/用户消息为空等)
+	CodeUpstreamRequestFailed = 2500 // 上游请求失败(非 401/403 的非 2xx 状态码)
+	CodeUpstreamParseFailed   = 2502 // 上游响应解析失败(响应体不符合所选协议结构)
+)

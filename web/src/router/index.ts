@@ -26,6 +26,12 @@ const router = createRouter({
           component: () => import('@/views/model/ModelListView.vue'),
           meta: { title: '模型列表' },
         },
+        {
+          path: 'test',
+          name: 'test',
+          component: () => import('@/views/test/ModelTestView.vue'),
+          meta: { title: '模型测试' },
+        },
       ],
     },
     // 未匹配路径统一回到首页
