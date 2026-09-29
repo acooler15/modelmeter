@@ -1,6 +1,6 @@
-// agent.go Agent 模型配置处理器:列表/详情/写回/还原。
+// agent.go Agent 模型配置处理器:列表/详情/模型清单/批量写回/还原。
 // 不依赖数据库;备份目录由 main 装配时注入的 dataDir 决定,
-// 具体的读写与备份逻辑全部在 internal/service/agentconf。
+// 具体的读写与备份逻辑全部在 internal/service/agentconf 及其 agents/ 子包。
 package handler
 
 import (
@@ -44,30 +44,48 @@ func AgentGet() gin.HandlerFunc {
 	}
 }
 
-// AgentApply PUT /api/agents/:name 写回修改;实现内部先备份再写,
-// 返回写回后的最新视图。body 形如 {"values": {"providerId": "...", ...}}。
-func AgentApply(dataDir string) gin.HandlerFunc {
+// AgentModelsGet GET /api/agents/:name/models 返回模型清单(凭据脱敏);
+// 配置文件缺失报 4404,非法 JSON 报 4402。
+func AgentModelsGet() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		a, ok := agentByName(c)
+		if !ok {
+			return
+		}
+		entries, err := a.Models(c.Request.Context())
+		if err != nil {
+			response.Fail(c, err)
+			return
+		}
+		response.OK(c, entries)
+	}
+}
+
+// AgentModelsApply PUT /api/agents/:name/models 批量白名单修改模型配置。
+// body 形如 {"patches": [{"provider_id": "...", "model_id": "...", "fields": {...}}]};
+// 实现内部先备份再原子写回,返回写回后的最新清单。
+func AgentModelsApply(dataDir string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		a, ok := agentByName(c)
 		if !ok {
 			return
 		}
 		var req struct {
-			Values map[string]string `json:"values"`
+			Patches []agentconf.ModelPatch `json:"patches"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			response.Fail(c, apperr.New(apperr.CodeAgentInvalid, "请求参数格式错误"))
 			return
 		}
-		if req.Values == nil {
-			req.Values = map[string]string{} // 空对象交给实现校验必填项,报 4403
+		if req.Patches == nil {
+			req.Patches = []agentconf.ModelPatch{} // 空提交交由实现返回现状清单
 		}
-		snap, err := a.Apply(c.Request.Context(), req.Values, dataDir)
+		entries, err := a.ApplyModels(c.Request.Context(), req.Patches, dataDir)
 		if err != nil {
 			response.Fail(c, err)
 			return
 		}
-		response.OK(c, snap)
+		response.OK(c, entries)
 	}
 }
 

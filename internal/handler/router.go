@@ -43,11 +43,13 @@ func NewRouter(db *gorm.DB, dataDir string) *gin.Engine {
 	n.GET("/rates", NewAPIRates(db))
 	n.POST("/estimate", NewAPIEstimate(db))
 
-	// Agent 模型配置:列表/详情/写回/还原(写回前自动备份,备份目录由 dataDir 决定)
+	// Agent 模型配置:列表/详情/模型清单/批量写回/还原(写回前自动备份,
+	// 备份目录由 dataDir 决定)
 	a := api.Group("/agents")
 	a.GET("", AgentList())
 	a.GET("/:name", AgentGet())
-	a.PUT("/:name", AgentApply(dataDir))
+	a.GET("/:name/models", AgentModelsGet())
+	a.PUT("/:name/models", AgentModelsApply(dataDir))
 	a.POST("/:name/restore", AgentRestore(dataDir))
 
 	return r

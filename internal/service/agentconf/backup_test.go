@@ -78,7 +78,7 @@ func TestRestoreLatest_无备份_4404(t *testing.T) {
 // TestRestoreLatest_目标目录缺失可重建 目标文件连同目录被删后仍可还原。
 func TestRestoreLatest_目标目录缺失可重建(t *testing.T) {
 	home := t.TempDir()
-	target := filepath.Join(home, ".zcode", "cli-bin", "model-selection.json")
+	target := filepath.Join(home, ".zcode", "settings", "models.json")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatalf("创建目录失败: %v", err)
 	}

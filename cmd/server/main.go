@@ -21,6 +21,10 @@ import (
 	"github.com/acooler15/modelmeter/internal/handler"
 	"github.com/acooler15/modelmeter/internal/model"
 	"github.com/acooler15/modelmeter/internal/web"
+
+	// 触发 Agent 配置实现(ZCode、WorkBuddy)的自注册;注册逻辑见
+	// internal/service/agentconf/agents/register.go
+	_ "github.com/acooler15/modelmeter/internal/service/agentconf/agents"
 )
 
 func main() {

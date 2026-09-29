@@ -36,7 +36,7 @@ func Backup(srcPath, agentName, dataDir string) (string, error) {
 	}
 	base := time.Now().Format(backupTimestamp)
 	dst := filepath.Join(dir, base+".bak")
-	for i := 2; fileExists(dst); i++ {
+	for i := 2; FileExists(dst); i++ {
 		dst = filepath.Join(dir, base+"-"+strconv.Itoa(i)+".bak")
 	}
 	if err := copyFile(srcPath, dst); err != nil {
