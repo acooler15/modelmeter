@@ -35,8 +35,13 @@
   校验口径一致;纯空白串当作留空,避免用户误输入空格清掉原凭据
   (接口配置与 New API 配置均按此实现)。
 - **改写用户本地/落盘文件必须原子替换**:同目录写临时文件后 `os.Rename`,
-  禁止 `os.WriteFile` 直接截断原文件(写回中途失败会把文件破坏成半截,
-  如 agentconf 写回 model-selection.json 的实现)。
+  禁止 `os.WriteFile` 直接截断原文件(写回中途失败会把文件破坏成半截),
+  参考实现见 agentconf 的 `WriteJSONFile`(同目录临时文件+改名替换)。
+- **外部 JSON 配置整读整写必须「白名单树编辑」**:`json.Decoder` +
+  `UseNumber()` 整读为 `map[string]any` 树,只改白名单键后整树写回;
+  禁止声明完整 struct 直接 Unmarshal(未声明字段会被整段丢弃,连凭据与
+  模板字段一起丢),未知键与凭据节点原样放回。参考实现见 agentconf
+  的 `agents/treeutil.go`(读树+白名单改键+兄弟键保留)。
 - 上游凭据(API Key / 令牌)只在代理客户端(llmclient)内进入请求头;
   DTO 的 json tag 用 `-` 挡序列化,对外一律脱敏视图。
 

@@ -1,0 +1,13 @@
+{"file": ".trellis/tasks/09-29-agentconf-realign/research.md", "reason": "本任务勘探依据:两份配置文件真实结构、勘误结论与安全红线"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "后端分层与命名约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "apperr 业务错误与统一信封(4401-4404 沿用)"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "slog 约定,禁记凭据"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端禁止/必须模式与测试要求(含 agentconf 旧表述待更新)"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "前端 src 布局与分工"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue 组件编写规范"}
+{"file": ".trellis/spec/frontend/composable-guidelines.md", "reason": "useRequest 等组合式函数规范"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Pinia store 规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "strict TS 与信封类型"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端禁止/必须模式"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用现有封装(backup/WriteJSONFile/FieldSpec)"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流一致性检查"}

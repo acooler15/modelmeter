@@ -60,6 +60,19 @@ ModelMeter/
 
 ---
 
+## 扩展点包布局(agentconf 型)
+
+读取/写回外部工具本地配置的扩展点(如 agentconf,后续接入新工具照此):
+
+- 接口、注册表、共享文件工具放根包 `internal/service/agentconf`;
+- 各工具实现放子包 `internal/service/agentconf/agents/`,子包 `init()`
+  调 `agentconf.Register` 自注册;
+- `cmd/server/main.go` 以空导入 `_ ".../agentconf/agents"` 触发注册;
+- **根包禁止 import 子包**(子包需引用根包类型,反向依赖会成环);
+  handler 只 import 根包,不感知具体实现。
+
+---
+
 ## 命名约定
 
 - 包名:小写、单个单词,禁止 `utils` / `common` 这类大杂烩包。
