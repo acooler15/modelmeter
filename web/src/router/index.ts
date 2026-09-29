@@ -20,6 +20,12 @@ const router = createRouter({
           component: () => import('@/views/provider/ProviderList.vue'),
           meta: { title: '接口配置' },
         },
+        {
+          path: 'models',
+          name: 'models',
+          component: () => import('@/views/model/ModelListView.vue'),
+          meta: { title: '模型列表' },
+        },
       ],
     },
     // 未匹配路径统一回到首页

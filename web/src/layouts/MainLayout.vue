@@ -12,6 +12,7 @@ const route = useRoute()
       <el-menu router :default-active="route.path">
         <el-menu-item index="/">首页</el-menu-item>
         <el-menu-item index="/providers">接口配置</el-menu-item>
+        <el-menu-item index="/models">模型列表</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

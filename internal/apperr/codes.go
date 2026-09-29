@@ -17,3 +17,11 @@ const (
 	CodeProviderDuplicate = 1402 // 名称已存在
 	CodeProviderNotFound  = 1404 // 接口配置不存在
 )
+
+// 上游访问类错误码:1xxx 段,模型列表/模型测试/费率查询共用。
+// 网络错误与鉴权错误必须可区分(P0 硬性要求),细分与文案见各任务 design.md。
+const (
+	CodeUpstreamNetwork     = 1500 // 无法连接上游服务(连接失败/超时/DNS/TLS)
+	CodeUpstreamAuth        = 1501 // 上游鉴权失败(HTTP 401/403)
+	CodeUpstreamBadResponse = 1502 // 上游响应异常(非 2xx 状态码或解析失败)
+)

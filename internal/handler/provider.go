@@ -99,3 +99,21 @@ func ProviderDelete(db *gorm.DB) gin.HandlerFunc {
 		response.OK(c, gin.H{"id": id})
 	}
 }
+
+// ProviderModels GET /api/providers/:id/models 经后端代理拉取上游模型列表,
+// 实时透传不落库;网络/鉴权/响应异常由 service 层归类为 1500/1501/1502。
+func ProviderModels(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := parseProviderID(c)
+		if err != nil {
+			response.Fail(c, err)
+			return
+		}
+		models, err := service.ListModels(c.Request.Context(), db, id)
+		if err != nil {
+			response.Fail(c, err)
+			return
+		}
+		response.OK(c, models)
+	}
+}
