@@ -118,6 +118,44 @@ func isStringSlice(v any) bool {
 	return false
 }
 
+// isNonEmptyStringSlice 判断提交值是否为元素非空字符串的数组;比 isStringSlice
+// 更严,供不允许空串档位值的 list 列(如 reasoning_levels)校验使用。
+func isNonEmptyStringSlice(v any) bool {
+	switch s := v.(type) {
+	case []string:
+		for _, e := range s {
+			if e == "" {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, e := range s {
+			if str, ok := e.(string); !ok || str == "" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// stringSliceValue 把提交的字符串数组规范为 []any(与解析树元素类型一致),
+// 元素已在校验阶段确认全为字符串;供 list 列落盘使用。
+func stringSliceValue(v any) []any {
+	switch s := v.(type) {
+	case []string:
+		out := make([]any, len(s))
+		for i, e := range s {
+			out[i] = e
+		}
+		return out
+	case []any:
+		return s
+	}
+	return nil
+}
+
 // boolDefault 宽容取布尔:缺失或非布尔返回 false。
 func boolDefault(v any) bool {
 	b, _ := boolOf(v)

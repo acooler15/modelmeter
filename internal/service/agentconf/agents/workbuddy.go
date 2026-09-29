@@ -9,7 +9,8 @@
 // 按 modelId 首个匹配定位数组元素,reasoning 节点缺失时创建;id、vendor、
 // apiKey 及未知键逐条原样保留。模型条目的新增/删除与 apiKey 管理一律引导
 // 用户到 WorkBuddy 原生工具操作。整体重编码时 map 键按字母序重排,
-// JSON 语义零变化(沿用既有取舍)。
+// JSON 语义零变化(沿用既有取舍)。WorkBuddy 无"默认模型"概念:能力位恒
+// false,不实现 DefaultModelSetter(handler 对其默认模型请求报 4405)。
 package agents
 
 import (
@@ -121,6 +122,8 @@ func (w *WorkBuddyAgent) collectEfforts() []string {
 }
 
 // workBuddyColumns 模型表格列描述;efforts 非空时 default_effort 为下拉列。
+// supported_efforts 为 list 列(白名单与 apply 逻辑本就支持,此列使其可见可编辑),
+// 选项留空由前端自由输入;WorkBuddy 无"默认模型"概念,能力位恒为 false(零值)。
 func workBuddyColumns(efforts []string) []agentconf.FieldSpec {
 	effortField := agentconf.FieldSpec{Key: wbFieldDefaultEffort, Label: "默认推理强度", Type: "text"}
 	if len(efforts) > 0 {
@@ -138,6 +141,7 @@ func workBuddyColumns(efforts []string) []agentconf.FieldSpec {
 		{Key: wbFieldSupportsImages, Label: "图像输入", Type: "bool"},
 		{Key: wbFieldSupportsReasoning, Label: "推理模式", Type: "bool"},
 		effortField,
+		{Key: wbFieldSupportedEfforts, Label: "支持档位", Type: "list"},
 		{Key: wbFileVendor, Label: "供应商", Type: "text", Readonly: true},
 	}
 }
@@ -292,23 +296,7 @@ func applyWorkBuddyPatch(arr []any, p agentconf.ModelPatch) {
 		case wbFieldDefaultEffort:
 			ensureMap(m, wbFileReasoning)["defaultEffort"] = v
 		case wbFieldSupportedEfforts:
-			ensureMap(m, wbFileReasoning)["supportedEfforts"] = effortsValue(v)
+			ensureMap(m, wbFileReasoning)["supportedEfforts"] = stringSliceValue(v)
 		}
 	}
-}
-
-// effortsValue 把提交的字符串数组规范为 []any(与解析树元素类型一致),
-// 元素已在校验阶段确认全为字符串。
-func effortsValue(v any) []any {
-	switch s := v.(type) {
-	case []string:
-		out := make([]any, len(s))
-		for i, e := range s {
-			out[i] = e
-		}
-		return out
-	case []any:
-		return s
-	}
-	return nil
 }

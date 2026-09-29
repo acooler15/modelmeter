@@ -56,14 +56,17 @@ ModelMeter 用于集中管理多个 LLM 服务接口(Base URL + API Key,可持�
 - 管理对象为本机 Agent 工具的模型配置文件,展示模型清单并支持在界面修改后
   白名单写回:
   - ZCode:`~/.zcode/v2/provider_config.json`,可修改模型的启用开关、
-    上下文窗口与最大输出 Token;供应商、协议、接口地址等只读展示。
+    上下文窗口、最大输出 Token、图像输入、JSON Schema 输出与推理档位;
+    供应商、协议、接口地址等只读展示。
   - WorkBuddy:`~/.workbuddy/models.json`,可修改显示名、接口地址、
-    工具调用 / 图像输入 / 推理模式开关与推理强度。
+    工具调用 / 图像输入 / 推理模式开关与推理强度(默认档位 / 支持档位)。
+- 默认模型(即"当前选中模型"):ZCode 支持读取、设置与清除
+  (`config.defaultModelSelection`,含推理档位);WorkBuddy 无此概念,
+  相关操作返回"该工具不支持"。
 - 管理边界:不新增、删除供应商或模型条目,不读取、写回任何 apiKey,
-  ZCode 的供应商与接口地址请在 ZCode 原生工具中管理;
-  **当前选中模型不在管理范围**,本页仅管理各工具的模型配置清单。
+  ZCode 的供应商与接口地址请在 ZCode 原生工具中管理。
 - 写回前自动备份原配置(保留最近 10 份),支持一键还原;白名单外的内容
-  (含 apiKey 与未知键)原样保留。
+  (含 apiKey 与未知键)原样保留,ZCode 配置的 schemaVersion 非 1 时拒绝读写。
 - 修改写回后建议重启对应工具使配置生效。
 - 设计上保留扩展点,便于后续接入其他 Agent 工具。
 
@@ -100,7 +103,7 @@ go run ./cmd/server
 
 - **开发模式**:终端 A 运行 `go run ./cmd/server`,终端 B 运行 `cd web && npm run dev`;Vite 已把 `/api` 代理到 `:8422`,前端热更新无需重新编译。
 - **环境变量**:`PORT`(默认 8422)、`DATA_DIR`(默认 data)、`LOG_LEVEL`(默认 info)、`LOG_FORMAT`(json/text,默认 json)。
-- **检查与测试**:`go test ./...`、`go vet ./...`;前端 `cd web && npm run lint && npm run build`(含 vue-tsc 类型检查)。
+- **检查与测试**:`go test ./internal/... ./cmd/...`、`go vet ./internal/... ./cmd/...`(不要用 `go test ./...`,会扫进 web/node_modules);前端 `cd web && npm run lint && npm run build`(含 vue-tsc 类型检查)。
 - **数据**:SQLite 文件位于 `data/modelmeter.db`,已 gitignore,删除即重置。
 
 ## 文档导航

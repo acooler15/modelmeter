@@ -10,15 +10,31 @@ export interface AgentFieldOption {
 export interface AgentFieldSpec {
   key: string
   label: string
-  /** 列的渲染形态:text 文本、select 下拉、number 数字、bool 开关。 */
-  type: 'text' | 'select' | 'number' | 'bool'
-  /** 仅 select 使用:下拉选项。 */
+  /** 列的渲染形态:text 文本、select 下拉、number 数字、bool 开关、list 多选(可自由添加)。 */
+  type: 'text' | 'select' | 'number' | 'bool' | 'list'
+  /** select 为单选下拉选项;list 为多选候选项(空则由用户自由输入)。 */
   options?: AgentFieldOption[]
   required: boolean
   /** 字段说明,界面展示。 */
   help?: string
   /** 只读列仅展示,不接受提交。 */
   readonly?: boolean
+}
+
+/** "默认模型"现状:对应 ZCode config.defaultModelSelection。 */
+export interface AgentDefaultModel {
+  provider_id: string
+  model_id: string
+  /** 推理档位,未设置时缺省。 */
+  reasoning_level?: string
+}
+
+/** 默认模型修改:provider_id+model_id 均空=清除,均非空=设置,混合被后端以 4403 拒绝。 */
+export interface AgentDefaultModelPatch {
+  provider_id: string
+  model_id: string
+  /** 仅设置时有效,缺省=不写 options。 */
+  reasoning_level?: string
 }
 
 /** Agent 配置现状视图;后端保证不回传任何凭据字段。 */
@@ -31,6 +47,10 @@ export interface AgentSnapshot {
   columns: AgentFieldSpec[]
   /** 指引或管理边界说明。 */
   message?: string
+  /** 能力位:该工具是否有"默认模型"概念(能力是工具属性,未找到配置时同样成立)。 */
+  supports_default_model: boolean
+  /** 当前默认模型;缺省/null=未设置或不支持该能力。 */
+  default_model?: AgentDefaultModel | null
 }
 
 /** 模型清单中的一个模型条目(凭据绝不包含)。 */

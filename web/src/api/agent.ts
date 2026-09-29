@@ -1,7 +1,12 @@
-// Agent 模型配置接口封装:列表/详情/模型清单/批量写回/还原。
+// Agent 模型配置接口封装:列表/详情/模型清单/批量写回/默认模型设置/还原。
 import { httpGet, httpPost, httpPut } from './http'
 
-import type { AgentModelEntry, AgentModelPatch, AgentSnapshot } from '@/types/agent'
+import type {
+  AgentDefaultModelPatch,
+  AgentModelEntry,
+  AgentModelPatch,
+  AgentSnapshot,
+} from '@/types/agent'
 
 /** 列出支持的 Agent 工具及配置现状(含未找到项)。 */
 export function listAgents(): Promise<AgentSnapshot[]> {
@@ -24,6 +29,17 @@ export function updateAgentModels(
   patches: AgentModelPatch[],
 ): Promise<AgentModelEntry[]> {
   return httpPut<AgentModelEntry[]>(`/api/agents/${encodeURIComponent(name)}/models`, { patches })
+}
+
+/**
+ * 设置/清除默认模型(patch 均空=清除);仅支持该能力的工具可用,未实现报 4405。
+ * 后端写回前自动备份,返回写回后的最新视图。
+ */
+export function setDefaultAgentModel(
+  name: string,
+  patch: AgentDefaultModelPatch,
+): Promise<AgentSnapshot> {
+  return httpPut<AgentSnapshot>(`/api/agents/${encodeURIComponent(name)}/default-model`, patch)
 }
 
 /** 从最近一份备份还原配置文件,返回还原后的最新视图。 */

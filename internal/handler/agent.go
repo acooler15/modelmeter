@@ -1,4 +1,4 @@
-// agent.go Agent 模型配置处理器:列表/详情/模型清单/批量写回/还原。
+// agent.go Agent 模型配置处理器:列表/详情/模型清单/批量写回/默认模型设置/还原。
 // 不依赖数据库;备份目录由 main 装配时注入的 dataDir 决定,
 // 具体的读写与备份逻辑全部在 internal/service/agentconf 及其 agents/ 子包。
 package handler
@@ -86,6 +86,36 @@ func AgentModelsApply(dataDir string) gin.HandlerFunc {
 			return
 		}
 		response.OK(c, entries)
+	}
+}
+
+// AgentDefaultModelSet PUT /api/agents/:name/default-model 设置/清除默认模型。
+// 仅实现 DefaultModelSetter 能力接口的 Agent 可用(当前为 ZCode),未实现的
+// 工具报 4405;body 即 DefaultModelPatch(provider_id+model_id 均空=清除),
+// 成功返回写回后的最新 Snapshot。
+func AgentDefaultModelSet(dataDir string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		a, ok := agentByName(c)
+		if !ok {
+			return
+		}
+		// 能力探测:按类型断言判断工具是否支持默认模型,未实现报 4405
+		setter, supported := a.(agentconf.DefaultModelSetter)
+		if !supported {
+			response.Fail(c, apperr.New(apperr.CodeAgentUnsupported, "该工具不支持设置默认模型"))
+			return
+		}
+		var patch agentconf.DefaultModelPatch
+		if err := c.ShouldBindJSON(&patch); err != nil {
+			response.Fail(c, apperr.New(apperr.CodeAgentInvalid, "请求参数格式错误"))
+			return
+		}
+		snap, err := setter.ApplyDefaultModel(c.Request.Context(), patch, dataDir)
+		if err != nil {
+			response.Fail(c, err)
+			return
+		}
+		response.OK(c, snap)
 	}
 }
 

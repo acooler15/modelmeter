@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -160,6 +161,10 @@ func TestWorkBuddy_Snapshot_列描述(t *testing.T) {
 	effort := findColumn(t, snap.Columns, "default_effort")
 	if effort.Type != "select" || len(effort.Options) != 2 || effort.Options[0].Value != "high" || effort.Options[1].Value != "max" {
 		t.Errorf("default_effort 应为含 2 个选项的下拉,实际 %+v", effort)
+	}
+	// supported_efforts 列:白名单本就支持,列描述使其可见可编辑
+	if c := findColumn(t, snap.Columns, "supported_efforts"); c.Type != "list" || c.Readonly {
+		t.Errorf("supported_efforts 应为可编辑 list 列,实际 %+v", c)
 	}
 	// 快照不得包含凭据内容
 	snapJSON, err := json.Marshal(snap)
@@ -416,5 +421,51 @@ func TestWorkBuddy_ApplyModels_空patch_不落盘(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "agent-backups", "workbuddy")); !os.IsNotExist(err) {
 		t.Errorf("空 patch 不应产生备份目录,实际 err=%v", err)
+	}
+}
+
+// TestWorkBuddy_ApplyModels_supportedEfforts写回 supported_efforts 列可写回:
+// []string 提交(前端 list 列的 Go 侧等价形态)落为字符串数组,reasoning
+// 节点缺失时创建,其余键原样。
+func TestWorkBuddy_ApplyModels_supportedEfforts写回(t *testing.T) {
+	home := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	patches := []agentconf.ModelPatch{{ModelID: "second-model", Fields: map[string]any{
+		"supported_efforts": []string{"low", "medium"},
+	}}}
+	latest, err := NewWorkBuddyAgent(home).ApplyModels(context.Background(), patches, t.TempDir())
+	if err != nil {
+		t.Fatalf("ApplyModels 失败: %v", err)
+	}
+	if efforts, ok := entryOf(t, latest, "second-model")["supported_efforts"].([]string); !ok || len(efforts) != 2 {
+		t.Errorf("写回后 supported_efforts 应为 2 项,实际 %v(%T)", latest[1].Fields["supported_efforts"], latest[1].Fields["supported_efforts"])
+	}
+	m1 := fixtureElement(t, readFixtureArray(t, home), 1)
+	efforts := stringSliceOf(mapGetObj(m1, "reasoning")["supportedEfforts"])
+	if len(efforts) != 2 || efforts[0] != "low" || efforts[1] != "medium" {
+		t.Errorf("reasoning.supportedEfforts 应为 [low medium],实际 %v", efforts)
+	}
+	if key := stringOf(m1["apiKey"]); key != "sk-wb-second" {
+		t.Errorf("apiKey 必须原样保留,实际 %q", key)
+	}
+}
+
+// TestWorkBuddy_能力一致性 WorkBuddy 无"默认模型"概念:能力位恒 false、
+// 默认模型恒 nil,且不实现 DefaultModelSetter(handler 将按未实现报 4405)。
+func TestWorkBuddy_能力一致性(t *testing.T) {
+	home := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	snap := NewWorkBuddyAgent(home).Snapshot(context.Background())
+	if snap.SupportsDefaultModel {
+		t.Error("WorkBuddy 能力位应为 false")
+	}
+	if snap.DefaultModel != nil {
+		t.Errorf("WorkBuddy 默认模型应为 nil,实际 %+v", snap.DefaultModel)
+	}
+	setterType := reflect.TypeOf((*agentconf.DefaultModelSetter)(nil)).Elem()
+	if reflect.TypeOf(&WorkBuddyAgent{}).Implements(setterType) {
+		t.Error("WorkBuddy 不应实现 DefaultModelSetter 接口")
 	}
 }

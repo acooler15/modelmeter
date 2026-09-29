@@ -98,8 +98,41 @@ var (
 // registerFakeAgent 把假实现注册进全局注册表(仅一次)。
 func registerFakeAgent(t *testing.T) {
 	t.Helper()
-	fakeOnce.Do(func() { agentconf.Register(testFake) })
+	fakeOnce.Do(func() {
+		agentconf.Register(testFake)
+		agentconf.Register(testFakeSetter)
+	})
 }
+
+// fakeDefaultSetter 假实现变体:在 fakeAgent 之上额外实现 DefaultModelSetter,
+// 验证默认模型端点的参数透传与响应信封。命名为 zz-fake-setter 保证排序靠后。
+type fakeDefaultSetter struct {
+	fakeAgent
+	gotPatch   agentconf.DefaultModelPatch
+	gotDataDir string
+}
+
+func (f *fakeDefaultSetter) Name() string        { return "zz-fake-setter" }
+func (f *fakeDefaultSetter) DisplayName() string { return "假工具(默认模型)" }
+
+func (f *fakeDefaultSetter) Snapshot(_ context.Context) agentconf.Snapshot {
+	return agentconf.Snapshot{
+		Name:                 f.Name(),
+		DisplayName:          "假工具(默认模型)",
+		Status:               agentconf.StatusFound,
+		Columns:              []agentconf.FieldSpec{},
+		SupportsDefaultModel: true,
+	}
+}
+
+func (f *fakeDefaultSetter) ApplyDefaultModel(_ context.Context, patch agentconf.DefaultModelPatch, dataDir string) (agentconf.Snapshot, error) {
+	f.gotPatch = patch
+	f.gotDataDir = dataDir
+	return f.Snapshot(context.Background()), f.err
+}
+
+// testFakeSetter 实现默认模型能力的假实现实例。
+var testFakeSetter = &fakeDefaultSetter{}
 
 // TestAgentGet_未知名称_4401 未注册的 Agent 名称统一报 4401。
 func TestAgentGet_未知名称_4401(t *testing.T) {
@@ -285,5 +318,84 @@ func TestAgentList_包含全部注册工具(t *testing.T) {
 	}
 	if _, exists := first["columns"]; !exists {
 		t.Error("快照应返回 columns 字段")
+	}
+}
+
+// TestAgentDefaultModelSet_信封与参数透传 body 的 patch 原样传给实现,
+// dataDir 使用路由装配时注入的目录,响应为实现返回的最新 Snapshot。
+func TestAgentDefaultModelSet_信封与参数透传(t *testing.T) {
+	registerFakeAgent(t)
+	testFakeSetter.err = nil
+	defer func() { testFakeSetter.err = nil }()
+
+	router, dataDir := newAgentTestRouter(t)
+	body := `{"provider_id":"p1","model_id":"m-1","reasoning_level":"high"}`
+	rec := putJSON(router, "/api/agents/zz-fake-setter/default-model", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("期望 HTTP 200,实际 %d", rec.Code)
+	}
+	if code := envelopeCode(t, rec); code != 0 {
+		t.Fatalf("期望成功信封,实际 %d", code)
+	}
+	if testFakeSetter.gotPatch.ProviderID != "p1" || testFakeSetter.gotPatch.ModelID != "m-1" ||
+		testFakeSetter.gotPatch.ReasoningLevel != "high" {
+		t.Errorf("patch 内容透传错误,实际 %+v", testFakeSetter.gotPatch)
+	}
+	if testFakeSetter.gotDataDir != dataDir {
+		t.Errorf("dataDir 应为路由注入的目录,实际 %q", testFakeSetter.gotDataDir)
+	}
+	// 响应 data 为实现返回的最新 Snapshot
+	var env struct {
+		Data agentconf.Snapshot `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("响应解析失败: %v", err)
+	}
+	if env.Data.Name != "zz-fake-setter" || !env.Data.SupportsDefaultModel {
+		t.Errorf("应返回最新 Snapshot,实际 %+v", env.Data)
+	}
+}
+
+// TestAgentDefaultModelSet_未实现能力_4405 未实现 DefaultModelSetter 的工具
+// (如 WorkBuddy 与无能力假实现)报 4405。
+func TestAgentDefaultModelSet_未实现能力_4405(t *testing.T) {
+	registerFakeAgent(t)
+	router, _ := newAgentTestRouter(t)
+	rec := putJSON(router, "/api/agents/zz-fake/default-model", `{"provider_id":"p1","model_id":"m-1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("期望 HTTP 400,实际 %d", rec.Code)
+	}
+	if code := envelopeCode(t, rec); code != 4405 {
+		t.Errorf("期望业务码 4405,实际 %d", code)
+	}
+	// 真实注册的 WorkBuddy 同样未实现该能力
+	rec = putJSON(router, "/api/agents/workbuddy/default-model", `{"provider_id":"p1","model_id":"m-1"}`)
+	if code := envelopeCode(t, rec); code != 4405 {
+		t.Errorf("WorkBuddy 期望业务码 4405,实际 %d", code)
+	}
+}
+
+// TestAgentDefaultModelSet_未知名称_4401 默认模型端点对未知名称报 4401。
+func TestAgentDefaultModelSet_未知名称_4401(t *testing.T) {
+	router, _ := newAgentTestRouter(t)
+	rec := putJSON(router, "/api/agents/nope/default-model", `{"provider_id":"p1","model_id":"m-1"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("期望 HTTP 400,实际 %d", rec.Code)
+	}
+	if code := envelopeCode(t, rec); code != 4401 {
+		t.Errorf("期望业务码 4401,实际 %d", code)
+	}
+}
+
+// TestAgentDefaultModelSet_非法body_4403 请求体不是合法 JSON 时报 4403。
+func TestAgentDefaultModelSet_非法body_4403(t *testing.T) {
+	registerFakeAgent(t)
+	router, _ := newAgentTestRouter(t)
+	rec := putJSON(router, "/api/agents/zz-fake-setter/default-model", "{bad")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("期望 HTTP 400,实际 %d", rec.Code)
+	}
+	if code := envelopeCode(t, rec); code != 4403 {
+		t.Errorf("期望业务码 4403,实际 %d", code)
 	}
 }

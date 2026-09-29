@@ -44,8 +44,9 @@ const (
 
 // Agent 配置类错误码:4xxx 段,细分与文案见任务 design.md。
 const (
-	CodeAgentUnknown  = 4401 // 不支持的 Agent 名称
-	CodeAgentFileIO   = 4402 // 配置文件读取/写回/备份失败,或内容不是合法 JSON
-	CodeAgentInvalid  = 4403 // 提交的配置值非法(必填缺失、不在可选项内等)
-	CodeAgentNotFound = 4404 // 配置文件不存在(含无备份可还原)
+	CodeAgentUnknown     = 4401 // 不支持的 Agent 名称
+	CodeAgentFileIO      = 4402 // 配置文件读取/写回/备份失败,或内容不是合法 JSON
+	CodeAgentInvalid     = 4403 // 提交的配置值非法(必填缺失、不在可选项内等)
+	CodeAgentNotFound    = 4404 // 配置文件不存在(含无备份可还原)
+	CodeAgentUnsupported = 4405 // 该 Agent 不支持所请求的操作(能力接口未实现)
 )
