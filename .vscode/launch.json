@@ -1,0 +1,47 @@
+{
+  // 调试配置:F5 默认启动「调试后端 (Go)」,其余场景见各配置注释。
+  // 提示:delve 会把调试用的二进制编译到临时路径,首次 F5 防火墙可能再弹一次,放行即可。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 后端断点调试:在 internal/handler、internal/service 等处打断点后 F5
+      "name": "调试后端 (Go)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}", // 固定工作目录,保证 DATA_DIR=data 落在项目根的 data/
+      "env": {
+        "PORT": "8422",
+        "DATA_DIR": "data",
+        "LOG_LEVEL": "debug",
+        "LOG_FORMAT": "text"
+      }
+    },
+    {
+      // 前端调试:先在终端启动 Vite(cd web && npm run dev),再选此项 F5;
+      // 断点直接打在 .vue / .ts 源码上
+      "name": "调试前端 (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/web/src"
+    },
+    {
+      // 备用:调试固定路径的已构建二进制(防火墙只弹一次)。
+      // 改代码后需先重新构建:go build -o bin/modelmeter.exe ./cmd/server
+      "name": "调试已构建二进制 (exec)",
+      "type": "go",
+      "request": "launch",
+      "mode": "exec",
+      "program": "${workspaceFolder}/bin/modelmeter.exe",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PORT": "8422",
+        "DATA_DIR": "data",
+        "LOG_LEVEL": "debug",
+        "LOG_FORMAT": "text"
+      }
+    }
+  ]
+}
