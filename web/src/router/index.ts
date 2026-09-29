@@ -14,6 +14,12 @@ const router = createRouter({
           component: () => import('@/views/home/HomeView.vue'),
           meta: { title: '首页' },
         },
+        {
+          path: 'providers',
+          name: 'providers',
+          component: () => import('@/views/provider/ProviderList.vue'),
+          meta: { title: '接口配置' },
+        },
       ],
     },
     // 未匹配路径统一回到首页

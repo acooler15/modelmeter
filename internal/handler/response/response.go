@@ -57,7 +57,7 @@ func Fail(c *gin.Context, err error) {
 // 状态码仅作辅助。未登记的资源类错误码按参数错误(400)处理。
 func httpStatusFor(code int) int {
 	switch code {
-	case apperr.CodeNotFound:
+	case apperr.CodeNotFound, apperr.CodeProviderNotFound:
 		return http.StatusNotFound
 	case apperr.CodeInternal:
 		return http.StatusInternalServerError

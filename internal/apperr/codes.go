@@ -10,3 +10,10 @@ const (
 	CodeNotFound   = 404 // 资源不存在
 	CodeInternal   = 500 // 服务器内部错误
 )
+
+// 接口配置(provider)类错误码:1xxx 段,细分与文案见任务 design.md。
+const (
+	CodeProviderInvalid   = 1401 // 参数缺失、ID 非法或 Base URL 不是合法 http(s) 地址
+	CodeProviderDuplicate = 1402 // 名称已存在
+	CodeProviderNotFound  = 1404 // 接口配置不存在
+)

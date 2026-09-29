@@ -19,6 +19,7 @@ import (
 
 	"github.com/acooler15/modelmeter/internal/config"
 	"github.com/acooler15/modelmeter/internal/handler"
+	"github.com/acooler15/modelmeter/internal/model"
 	"github.com/acooler15/modelmeter/internal/web"
 )
 
@@ -92,12 +93,19 @@ func mustOpenDB(cfg config.Config) *gorm.DB {
 		os.Exit(1)
 	}
 	dsn := filepath.Join(cfg.DataDir, "modelmeter.db")
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		// 时间字段统一以 UTC 写入(见 .trellis/spec/backend/database-guidelines.md)
+		NowFunc: func() time.Time { return time.Now().UTC() },
+	})
 	if err != nil {
 		slog.Error("打开数据库失败", "dsn", dsn, "err", err)
 		os.Exit(1)
 	}
-	// 表结构变更走启动时 AutoMigrate;首个业务模型落地后在此登记
+	// 表结构变更走启动时 AutoMigrate;新增模型必须在此登记
 	// (见 .trellis/spec/backend/database-guidelines.md)
+	if err := db.AutoMigrate(&model.Provider{}); err != nil {
+		slog.Error("数据库迁移失败", "err", err)
+		os.Exit(1)
+	}
 	return db
 }

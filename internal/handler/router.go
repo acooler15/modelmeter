@@ -20,5 +20,12 @@ func NewRouter(db *gorm.DB) *gin.Engine {
 	api := r.Group("/api")
 	api.GET("/health", Health(db))
 
+	// 接口配置:列表/新增挂集合根,编辑/删除挂 :id
+	p := api.Group("/providers")
+	p.GET("", ProviderList(db))
+	p.POST("", ProviderCreate(db))
+	p.PUT("/:id", ProviderUpdate(db))
+	p.DELETE("/:id", ProviderDelete(db))
+
 	return r
 }

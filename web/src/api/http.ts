@@ -49,3 +49,16 @@ export function httpPost<T>(url: string, body?: unknown): Promise<T> {
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 }
+
+/** 发起 PUT 请求并返回信封中的业务数据。 */
+export function httpPut<T>(url: string, body?: unknown): Promise<T> {
+  return request<T>(url, {
+    method: 'PUT',
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+}
+
+/** 发起 DELETE 请求并返回信封中的业务数据。 */
+export function httpDelete<T>(url: string): Promise<T> {
+  return request<T>(url, { method: 'DELETE' })
+}
