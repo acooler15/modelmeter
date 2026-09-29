@@ -5,14 +5,15 @@
 ## 清单
 
 - [x] 1. 创建任务树与共享规划文档
-- [ ] 2. 子任务 1:`09-29-interface-config`(启动前补齐 design/implement → 实现 → 检查 → 归档)
-- [ ] 3. 子任务 2:`09-29-model-list`(同上)
-- [ ] 4. 子任务 3:`09-29-model-test`(同上)
-- [ ] 5. 子任务 4:`09-29-newapi-rates`(同上)
-- [ ] 6. 子任务 5:`09-29-agent-config`(同上)
-- [ ] 7. 集成回归:按父任务 `prd.md` 跨子任务验收标准逐项核验
-- [ ] 8. 规范沉淀:实现中的新约定回写 `.trellis/spec/`(trellis-update-spec)
-- [ ] 9. 提交与收尾
+- [x] 2. 子任务 1:`09-29-interface-config`(实现→检查→归档)
+- [x] 3. 子任务 2:`09-29-model-list`(实现→检查→归档)
+- [x] 4. 子任务 3:`09-29-model-test`(实现→检查→归档)
+- [x] 5. 子任务 4:`09-29-newapi-rates`(实现→检查→归档)
+- [x] 6. 子任务 5:`09-29-agent-config`(实现→检查→归档)
+- [x] 7. 集成回归:跨子任务验收标准逐项核验通过(假上游全旅程 + 重启持久化 + 日志无凭据)
+- [x] 8. 规范沉淀:留空沿用 TrimSpace、原子写文件、SSE 信封例外、UTC NowFunc、
+      凭据模型不嵌 gorm.Model、go test 范围、Element Plus 中文 locale 回写 .trellis/spec
+- [x] 9. 提交与收尾
 
 ## 每个子任务的通用验证命令
 

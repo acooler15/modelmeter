@@ -31,6 +31,14 @@
 - 返回给前端的错误走 `internal/apperr`,消息为中文。
 - 新增依赖前先确认标准库/已有依赖无法胜任;引入新第三方库需在任务记录
   中说明理由。
+- **「编辑留空沿用原值」的判断必须用 `strings.TrimSpace(v) == ""`**,与新增
+  校验口径一致;纯空白串当作留空,避免用户误输入空格清掉原凭据
+  (接口配置与 New API 配置均按此实现)。
+- **改写用户本地/落盘文件必须原子替换**:同目录写临时文件后 `os.Rename`,
+  禁止 `os.WriteFile` 直接截断原文件(写回中途失败会把文件破坏成半截,
+  如 agentconf 写回 model-selection.json 的实现)。
+- 上游凭据(API Key / 令牌)只在代理客户端(llmclient)内进入请求头;
+  DTO 的 json tag 用 `-` 挡序列化,对外一律脱敏视图。
 
 ---
 
@@ -40,7 +48,9 @@
 - 范围:`internal/service` 的业务规则必须覆盖;model 查询辅助建议配合
   内存 SQLite(`:memory:`)覆盖;handler 以 service 测试为主,不强制。
 - 命名:`被测函数_test.go`,`TestXxx_场景` 形式,注释用中文说明场景。
-- 命令:`go test ./...`;提交前必须全绿。
+- 命令:`go test ./internal/... ./cmd/...`;提交前必须全绿。
+  (不要用 `go test ./...`:会扫到 `web/node_modules` 内的第三方 Go 文件,
+  产生大量无意义输出。)
 
 ---
 

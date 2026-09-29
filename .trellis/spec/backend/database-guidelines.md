@@ -51,10 +51,14 @@ func (Meter) TableName() string { return "meters" }
 ```
 
 - 统一嵌入 `gorm.Model` 获得标准四字段;软删除保持开启。
+  **豁免**:承载敏感凭据的模型(如 `Provider`)显式定义字段、不嵌
+  `gorm.Model`——API Key 必须物理删除,不允许软删数据残留库中。
 - 必须显式定义 `TableName()`,返回小写复数 snake_case
   (`meters`、`readings`)。不要依赖 GORM 的表名推断。
 - 列名使用字段名的隐式 snake_case;`gorm:` 标签只用于
   size/null/index/default,不用于改列名。
+- 时间一律存 UTC:在 `main.go` 唯一允许的 `gorm.Open` 处统一注入
+  `gorm.Config{ NowFunc: time.Now().UTC }`,业务代码不再各自转换。
 
 ---
 

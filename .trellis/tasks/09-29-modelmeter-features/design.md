@@ -28,6 +28,7 @@
 | /api/test/records | GET / DELETE(清空) | model-test |
 | /api/newapi/config | GET / PUT | newapi-rates |
 | /api/newapi/rates | GET | newapi-rates |
+| /api/newapi/estimate | POST(单次成本估算,未命中也返回 code=0) | newapi-rates |
 | /api/agents | GET(列表与配置现状) | agent-config |
 | /api/agents/:name | GET / PUT | agent-config |
 | /api/agents/:name/restore | POST | agent-config |

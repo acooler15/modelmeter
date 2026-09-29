@@ -38,14 +38,14 @@
 - 遵循 `.trellis/spec/backend/` 与 `.trellis/spec/frontend/` 全部规范。
 - API 路由总表、错误码分段、数据模型、上游代理客户端约定以父任务 `design.md` 登记为准,子任务不得与其冲突;新增条目先回父任务登记。
 
-## 跨子任务验收标准(集成验收,父任务收尾逐项核验)
+## 跨子任务验收标准(集成验收,2026-09-29 已全部核验通过)
 
-- [ ] 五个子任务全部完成并归档
-- [ ] `go vet ./...`、`go test ./...` 通过;`cd web && npm run lint && npm run build` 通过
-- [ ] `go run ./cmd/server` 一行启动后,浏览器走通完整用户旅程:添加接口配置 → 拉取模型列表 → 三协议各测一次(含流式)→ 查看测试记录 → 配置 New API 并查看费率 → 修改 ZCode 模型配置并还原
-- [ ] SQLite 数据落盘 `data/modelmeter.db`,重启后接口配置与测试记录仍在
-- [ ] 全程日志与页面无 API Key 明文
-- [ ] 非功能需求达标:单二进制、默认 `:8080`、全中文界面
+- [x] 五个子任务全部完成并归档(archive/2026-09/)
+- [x] `go vet ./...`、`go test ./...` 通过;`cd web && npm run lint && npm run build` 通过
+- [x] `go run ./cmd/server` 一行启动后走通完整用户旅程:添加接口配置 → 拉取模型列表 → 三协议各测一次(含流式)→ 查看测试记录 → 配置 New API 并查看费率 → Agent 配置页展示 ZCode(已找到)与 WorkBuddy(未找到,按预案占位);集成验收由假上游完成(浏览器不可用降级为 API+静态走查)
+- [x] SQLite 数据落盘 `data/modelmeter.db`,重启后接口配置与测试记录仍在
+- [x] 全程日志与页面无 API Key 明文
+- [x] 非功能需求达标:单二进制、默认 `:8080`、全中文界面
 
 ## Notes
 

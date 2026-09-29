@@ -67,6 +67,19 @@ response.Fail(c, err)
 - 500 的 `message` 固定为通用文案(如"服务器内部错误"),细节只进日志,
   不暴露给客户端。
 
+### 流式响应(SSE)的信封例外
+
+`/api/test/stream` 类流式端点遵循两条边界规则:
+
+- **开始推送前**(参数校验失败、配置不存在、上游握手失败等)一律走统一
+  信封错误(4xx/5xx + code/message),前端按普通 ApiError 处理。
+- **开始推送后**才切换 `Content-Type: text/event-stream`,事件统一为
+  `data: {"type":"delta"|"done"|"error", ...}\n\n`,每个事件后 Flush;推送中
+  的失败用 `{"type":"error"}` 事件表达,不再回信封。
+
+实现要点:handler 用 `pushed` 标记区分两个阶段,**首个上游增量到达时才设置
+SSE 头**——若在校验通过后立即切头,上游 401/拒连就无法按信封返回了。
+
 ---
 
 ## 常见错误

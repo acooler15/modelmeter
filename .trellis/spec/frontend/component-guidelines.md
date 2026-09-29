@@ -75,3 +75,7 @@ const label = computed(() => `${props.meter.name}(#${props.meter.id})`)
 - 用 Options API 或混用两种 API 风格。
 - 手动 `import { ElButton } from 'element-plus'`(自动导入已覆盖)。
 - 忘写 `scoped` 导致样式互相污染。
+- 界面出现 Element Plus 英文内置文案(空数据 "No Data"、分页等)——
+  组件按需自动导入时不会带中文语言包,必须保持 `App.vue` 用
+  `el-config-provider` 注入 `element-plus/es/locale/lang/zh-cn`;
+  表格另用 `empty-text` 给出业务化中文空态。
