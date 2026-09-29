@@ -305,12 +305,23 @@ func TestAgentList_包含全部注册工具(t *testing.T) {
 		t.Fatalf("期望成功信封,实际 %v", env["code"])
 	}
 	data, _ := env["data"].([]any)
-	if len(data) < 2 {
-		t.Fatalf("应包含 zcode 与 workbuddy 两个工具,实际 %d 个", len(data))
+	if len(data) < 3 {
+		t.Fatalf("应包含 codebuddy、zcode 与 workbuddy 三个工具,实际 %d 个", len(data))
+	}
+	names := make(map[string]bool, len(data))
+	for _, e := range data {
+		if m, ok := e.(map[string]any); ok {
+			names[m["name"].(string)] = true
+		}
+	}
+	for _, want := range []string{"codebuddy", "workbuddy", "zcode"} {
+		if !names[want] {
+			t.Errorf("列表应包含工具 %s,实际 %v", want, names)
+		}
 	}
 	first, _ := data[0].(map[string]any)
-	if first["name"] != "workbuddy" {
-		t.Errorf("列表应按名称排序(workbuddy 在前),实际 %v", first["name"])
+	if first["name"] != "codebuddy" {
+		t.Errorf("列表应按名称排序(codebuddy 在前),实际 %v", first["name"])
 	}
 	// 快照已瘦身为列描述,不再携带 values
 	if _, exists := first["values"]; exists {

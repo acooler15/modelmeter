@@ -1,4 +1,5 @@
-// Package agents 承载 agentconf.Agent 的各具体实现(ZCode、WorkBuddy 等)。
+// Package agents 承载 agentconf.Agent 的各具体实现(CodeBuddy、ZCode、
+// WorkBuddy 等)。
 // 每个实现通过本包 init 自注册到 agentconf 注册表,由 cmd/server/main.go 对
 // 本包的空导入触发;agentconf 根包不反向依赖本包,避免循环导入。
 //
@@ -19,6 +20,7 @@ func init() {
 	if err != nil {
 		home = ""
 	}
+	agentconf.Register(NewCodeBuddyAgent(home))
 	agentconf.Register(NewZCodeAgent(home))
 	agentconf.Register(NewWorkBuddyAgent(home))
 }

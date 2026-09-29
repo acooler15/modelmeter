@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Agent 配置页:列出本机支持的 Agent 工具(ZCode、WorkBuddy),每个工具
+// Agent 配置页:列出本机支持的 Agent 工具(CodeBuddy、ZCode、WorkBuddy),每个工具
 // 一张卡片;卡片内部自行管理模型清单的加载、编辑、默认模型设置与保存,本页
 // 只负责 Agent 列表与还原/默认模型写回成功后的状态刷新。列表数据为页面私有,
 // 由 useRequest 持有。
