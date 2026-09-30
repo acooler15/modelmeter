@@ -201,6 +201,26 @@ func boolDefault(v any) bool {
 	return b
 }
 
+// standardEffortLevels 思考强度的标准五档(与 ZCode 规则 reasoningLevel.values
+// 的标准值域一致);WorkBuddy/CodeBuddy 的档位两列以此为候选项基底。
+var standardEffortLevels = []string{"low", "medium", "high", "xhigh", "max"}
+
+// effortOptions 由标准五档 + 文件内自定义档位构造列候选项:标准档在前,
+// custom 中不属于标准档的按原顺序追加,保序去重;供 WorkBuddy/CodeBuddy 的
+// default_effort(select)与 supported_efforts(list)两列共用。
+func effortOptions(custom []string) []agentconf.FieldOption {
+	seen := make(map[string]bool, len(standardEffortLevels)+len(custom))
+	opts := make([]agentconf.FieldOption, 0, len(standardEffortLevels)+len(custom))
+	for _, level := range append(append([]string{}, standardEffortLevels...), custom...) {
+		if seen[level] {
+			continue
+		}
+		seen[level] = true
+		opts = append(opts, agentconf.FieldOption{Value: level, Label: level})
+	}
+	return opts
+}
+
 // patchChangedKeys 汇总 patch 改动的字段键名(仅键名,不含值)供日志使用,
 // 避免日志中出现任何提交值。
 func patchChangedKeys(patches []agentconf.ModelPatch) string {

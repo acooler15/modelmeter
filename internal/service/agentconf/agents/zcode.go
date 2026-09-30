@@ -9,7 +9,10 @@
 //
 // 写侧:仅白名单修改模型规则的 enabled / properties.contextWindow /
 // properties.inputFormat.supportsImage / properties.supportsJsonSchemaOutput /
-// optionSpecs.maxOutputTokens.max / optionSpecs.reasoningLevel.values。整体流程为
+// optionSpecs.maxOutputTokens.max / optionSpecs.reasoningLevel.values;数字键
+// 接受 null、推理档位接受 null 或空数组表示显式清除——移除对应选项节点
+// (连同变空的中间容器),使规则回到"选项未写"状态,由 ZCode 智能配置补
+// 默认值。整体流程为
 // json.Decoder+UseNumber 解析成 map 树 → 只动命中节点 → 原子写回:凭据字段
 // (access.apiKey)、templateId、manualProviderModelRules 及其他未知键原样保留,
 // 数字经 UseNumber 零精度丢失。追加规则节点前先查 manualProviderModelRules,
@@ -473,8 +476,11 @@ const zcodeNewProviderPrefix = "new-provider"
 
 // splitAddIDs 按 existing 集合把待添加 id 拆为新增与跳过两组:已存在的逐条
 // 跳过,其余按输入顺序返回;新增 id 顺带登记进 existing,天然处理请求内重复。
+// 两组切片恒非 nil(空时序列化为 [] 而非 null):前端成功分支直接对
+// result.added/skipped 取 length,null 会抛 TypeError 中断关弹窗与刷新。
 func splitAddIDs(modelIDs []string, existing map[string]bool) (added, skipped []string) {
 	added = make([]string, 0, len(modelIDs))
+	skipped = make([]string, 0, len(modelIDs))
 	for _, id := range modelIDs {
 		if existing[id] {
 			skipped = append(skipped, id)
@@ -879,11 +885,16 @@ func validateZCodePatches(doc map[string]any, patches []agentconf.ModelPatch) er
 					return apperr.New(apperr.CodeAgentInvalid, "字段 "+k+" 必须为布尔值")
 				}
 			case zcodeFieldContextWindow, zcodeFieldMaxOutputTokens:
+				// nil 为显式清除(移除选项节点,见 applyZCodePatch),数字为设置
+				if v == nil {
+					continue
+				}
 				if _, ok := numberValue(v); !ok {
 					return apperr.New(apperr.CodeAgentInvalid, "字段 "+k+" 必须为数字")
 				}
 			case zcodeFieldReasoningLevels:
-				if !isNonEmptyStringSlice(v) {
+				// nil 或空数组为显式清除;非空数组仍要求元素全为非空字符串
+				if !clearsReasoningLevels(v) && !isNonEmptyStringSlice(v) {
 					return apperr.New(apperr.CodeAgentInvalid, "字段 reasoning_levels 必须为非空字符串数组")
 				}
 			default:
@@ -980,7 +991,12 @@ func applyZCodePatch(doc map[string]any, p agentconf.ModelPatch) {
 		}
 	}
 	if rule == nil {
-		// 无任何规则节点:追加最小节点,config 内只写入 patch 涉及的键
+		// 无任何规则节点且 patch 全为清除语义:没有可清除的落点,不凭空创建
+		// 空规则节点(树内容不变)
+		if zcodePatchOnlyClears(p) {
+			return
+		}
+		// 追加最小节点,config 内只写入 patch 涉及的键
 		rule = map[string]any{"providerId": p.ProviderID, "modelId": p.ModelID}
 		rules = append(rules, rule)
 		setZCodeRulesSlice(doc, rules)
@@ -991,6 +1007,11 @@ func applyZCodePatch(doc map[string]any, p agentconf.ModelPatch) {
 		case zcodeFieldEnabled:
 			cfg[zcodeFieldEnabled] = v
 		case zcodeFieldContextWindow:
+			if v == nil {
+				// 显式清除:contextWindow 即选项本体,移除后 properties 变空则一并回收
+				removeZCodeOption(cfg, "properties", "contextWindow")
+				continue
+			}
 			n, _ := numberValue(v)
 			ensureMap(cfg, "properties")["contextWindow"] = n
 		case zcodeFieldSupportsImage:
@@ -998,12 +1019,73 @@ func applyZCodePatch(doc map[string]any, p agentconf.ModelPatch) {
 		case zcodeFieldSupportsJSONSchema:
 			ensureMap(cfg, "properties")["supportsJsonSchemaOutput"] = v
 		case zcodeFieldMaxOutputTokens:
+			if v == nil {
+				// 显式清除:节点内 map 等键属于该选项自身,随节点整体移除——
+				// 残留半截节点反而可能不满足 zod 形状;optionSpecs 变空则一并回收
+				removeZCodeOption(cfg, "optionSpecs", "maxOutputTokens")
+				continue
+			}
 			n, _ := numberValue(v)
 			ensureMap(ensureMap(cfg, "optionSpecs"), "maxOutputTokens")["max"] = n
 		case zcodeFieldReasoningLevels:
+			if clearsReasoningLevels(v) {
+				// 显式清除:整节点移除(含 map 等选项自身键),空容器回收
+				removeZCodeOption(cfg, "optionSpecs", "reasoningLevel")
+				continue
+			}
 			ensureMap(ensureMap(cfg, "optionSpecs"), "reasoningLevel")["values"] = stringSliceValue(v)
 		}
 	}
+}
+
+// zcodePatchOnlyClears 判断 patch 是否全为清除语义(数字键 null、档位键 null
+// 或空数组);含任何设置语义键(布尔、非空数字、非空档位)时为 false。
+// 供无规则节点时跳过纯清除补丁,避免凭空创建空规则节点。
+func zcodePatchOnlyClears(p agentconf.ModelPatch) bool {
+	for k, v := range p.Fields {
+		switch k {
+		case zcodeFieldContextWindow, zcodeFieldMaxOutputTokens:
+			if v != nil {
+				return false
+			}
+		case zcodeFieldReasoningLevels:
+			if !clearsReasoningLevels(v) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// removeZCodeOption 从规则 config 移除一个选项:删除 container[child](选项
+// 节点整体),container 因此变空时一并删除——使规则回到"选项未写"状态,
+// 由 ZCode 智能配置补默认值;container 尚有其他键时保留。container 缺失或
+// 不是对象时静默返回(本就未写)。
+func removeZCodeOption(cfg map[string]any, container, child string) {
+	m, ok := cfg[container].(map[string]any)
+	if !ok {
+		return
+	}
+	delete(m, child)
+	if len(m) == 0 {
+		delete(cfg, container)
+	}
+}
+
+// clearsReasoningLevels 判断 reasoning_levels 提交值是否为清除语义(nil 或空
+// 数组);非空数组的元素类型交由 isNonEmptyStringSlice 校验。
+func clearsReasoningLevels(v any) bool {
+	switch s := v.(type) {
+	case nil:
+		return true
+	case []string:
+		return len(s) == 0
+	case []any:
+		return len(s) == 0
+	}
+	return false
 }
 
 // ensureZCodeRulesSlice 取 config.modelConfigRules.providerModelRules 数组,

@@ -13,12 +13,12 @@
 //
 // 写侧:白名单修改 name、url、disabled、supportsToolCall、supportsImages、
 // supportsReasoning、onlyReasoning、useCustomProtocol、maxInputTokens、
-// maxOutputTokens、temperature、reasoning.defaultEffort、
-// reasoning.supportedEfforts、reasoning.canDisableThinking;按 modelId 首
-// 个匹配定位数组元素,reasoning 节点缺失时创建;id、vendor、apiKey、tags
-// 及未知键逐条原样保留。顶层形态写回保持不变——对象形态只原地回填 models
-// 数组,availableModels 等顶层键零丢失(WorkBuddy 自己会把对象重写回裸数组,
-// 本适配器更保守)。
+// maxOutputTokens、temperature、reasoning.defaultEffort、reasoning.supportedEfforts、
+// reasoning.canDisableThinking;三个数字键接受 null 表示显式清除(移除该键,
+// 恢复"文件未写"的工具缺省态);按 modelId 首个匹配定位数组元素,reasoning
+// 节点缺失时创建;id、vendor、apiKey、tags 及未知键逐条原样保留。顶层形态
+// 写回保持不变——对象形态只原地回填 models 数组,availableModels 等顶层键
+// 零丢失(WorkBuddy 自己会把对象重写回裸数组,本适配器更保守)。
 //
 // 模型删除(RemoveModels)与添加(AddModels):删除按定位过滤数组元素(非
 // 对象元素原样保留),对象形态同步移除顶层 availableModels 中命中的 id;添加
@@ -95,10 +95,10 @@ const (
 	wbFileModels    = "models" // 对象形态承载模型数组的顶层键
 )
 
-// Snapshot 实现 Agent 接口:配置文件存在即 found;default_effort 下拉选项取
-// 全部条目 supportedEfforts 的并集(保序去重),无选项时降级为文本输入。
-// 增删模型能力位恒置 true(能力是工具属性,文件缺失时同样成立);WorkBuddy
-// 无"默认模型"概念,该能力位恒 false(零值)。
+// Snapshot 实现 Agent 接口:配置文件存在即 found;default_effort 下拉选项为
+// 标准五档合并文件内自定义档位(effortOptions)。增删模型能力位恒置 true
+// (能力是工具属性,文件缺失时同样成立);WorkBuddy 无"默认模型"概念,
+// 该能力位恒 false(零值)。
 func (w *WorkBuddyAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	path := w.modelsPath()
 	if !agentconf.FileExists(path) {
@@ -126,9 +126,9 @@ func (w *WorkBuddyAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	}
 }
 
-// collectEfforts 汇总全部条目的 supportedEfforts(保序去重),作为
-// default_effort 列的下拉选项;文件缺失、解析失败或形态不受支持时返回空,
-// 由调用方降级为文本。
+// collectEfforts 汇总全部条目的 supportedEfforts(保序去重),与标准五档合并
+// 后作为档位两列的候选项;文件缺失、解析失败或形态不受支持时返回空,此时
+// 候选项仅含标准五档(effortOptions 恒非空)。
 func (w *WorkBuddyAgent) collectEfforts() []string {
 	root, err := w.readDoc()
 	if err != nil {
@@ -155,18 +155,17 @@ func (w *WorkBuddyAgent) collectEfforts() []string {
 	return efforts
 }
 
-// workBuddyColumns 模型表格列描述;efforts 非空时 default_effort 为下拉列。
+// workBuddyColumns 模型表格列描述;档位两列候选项恒含标准五档并合并文件内
+// 自定义档位(effortOptions,恒非空,default_effort 不再有 text 降级形态)。
 // supported_efforts 为 list 列(白名单与 apply 逻辑本就支持,此列使其可见可编辑),
-// 选项留空由前端自由输入;can_disable_thinking 的文件缺省即 true(仅 false
+// 选项外的档位由前端自由输入;can_disable_thinking 的文件缺省即 true(仅 false
 // 才落盘);WorkBuddy 无"默认模型"概念,能力位恒为 false(零值)。
 func workBuddyColumns(efforts []string) []agentconf.FieldSpec {
-	effortField := agentconf.FieldSpec{Key: wbFieldDefaultEffort, Label: "默认推理强度", Type: "text"}
-	if len(efforts) > 0 {
-		effortField.Type = "select"
-		effortField.Options = make([]agentconf.FieldOption, 0, len(efforts))
-		for _, e := range efforts {
-			effortField.Options = append(effortField.Options, agentconf.FieldOption{Value: e, Label: e})
-		}
+	effortField := agentconf.FieldSpec{
+		Key:     wbFieldDefaultEffort,
+		Label:   "默认推理强度",
+		Type:    "select",
+		Options: effortOptions(efforts),
 	}
 	return []agentconf.FieldSpec{
 		{Key: "model_id", Label: "模型 ID", Type: "text", Readonly: true},
@@ -177,7 +176,7 @@ func workBuddyColumns(efforts []string) []agentconf.FieldSpec {
 		{Key: wbFieldSupportsImages, Label: "图像输入", Type: "bool"},
 		{Key: wbFieldSupportsReasoning, Label: "推理模式", Type: "bool"},
 		effortField,
-		{Key: wbFieldSupportedEfforts, Label: "支持档位", Type: "list"},
+		{Key: wbFieldSupportedEfforts, Label: "支持档位", Type: "list", Options: effortOptions(efforts)},
 		{Key: wbFieldCanDisableThinking, Label: "可关闭思考", Type: "bool"},
 		{Key: wbFieldOnlyReasoning, Label: "仅推理", Type: "bool"},
 		{Key: wbFieldUseCustomProtocol, Label: "URL 原样请求", Type: "bool"},
@@ -504,6 +503,10 @@ func validateWorkBuddyPatches(arr []any, patches []agentconf.ModelPatch) error {
 					return apperr.New(apperr.CodeAgentInvalid, "字段 "+k+" 必须为布尔值")
 				}
 			case wbFieldMaxInputTokens, wbFieldMaxOutputTokens, wbFieldTemperature:
+				// nil 为显式清除:移除该数字键,恢复"文件未写"缺省态
+				if v == nil {
+					continue
+				}
 				if _, ok := numberValue(v); !ok {
 					return apperr.New(apperr.CodeAgentInvalid, "字段 "+k+" 必须为数字")
 				}
@@ -521,7 +524,7 @@ func validateWorkBuddyPatches(arr []any, patches []agentconf.ModelPatch) error {
 
 // applyWorkBuddyPatch 定位数组元素并应用白名单修改;reasoning 节点缺失时创建。
 // id、vendor、apiKey、tags 及未知键不在白名单内,原样保留;数字经 numberValue
-// 规范(整数不落科学计数法)。
+// 规范(整数不落科学计数法),nil 清除该键恢复缺省。
 func applyWorkBuddyPatch(arr []any, p agentconf.ModelPatch) {
 	m := locateWorkBuddy(arr, p.ModelID) // 校验阶段已保证存在
 	for k, v := range p.Fields {
@@ -549,12 +552,24 @@ func applyWorkBuddyPatch(arr []any, p agentconf.ModelPatch) {
 		case wbFieldCanDisableThinking:
 			ensureMap(m, wbFileReasoning)["canDisableThinking"] = v
 		case wbFieldMaxInputTokens:
+			if v == nil {
+				delete(m, "maxInputTokens") // 显式清除:恢复工具缺省语义
+				continue
+			}
 			n, _ := numberValue(v)
 			m["maxInputTokens"] = n
 		case wbFieldMaxOutputTokens:
+			if v == nil {
+				delete(m, "maxOutputTokens")
+				continue
+			}
 			n, _ := numberValue(v)
 			m["maxOutputTokens"] = n
 		case wbFieldTemperature:
+			if v == nil {
+				delete(m, "temperature")
+				continue
+			}
 			n, _ := numberValue(v)
 			m["temperature"] = n
 		}

@@ -70,12 +70,13 @@ export interface AgentModelEntry {
   fields: Record<string, unknown>
 }
 
-/** 对一个模型条目的白名单局部修改。 */
+/** 对一个模型条目的白名单局部修改。
+ * 数字键(及 ZCode 档位键)传 null 表示显式清除:后端移除对应配置节点,
+ * 恢复工具缺省语义;含白名单外键会被后端以 4403 拒绝。 */
 export interface AgentModelPatch {
   /** ZCode 定位键;WorkBuddy 为空。 */
   provider_id?: string
   model_id: string
-  /** 仅白名单键;含白名单外键会被后端以 4403 拒绝。 */
   fields: Record<string, unknown>
 }
 

@@ -171,9 +171,14 @@ async function loadModels() {
   applyEntries(list)
 }
 
-/** 判断草稿值相对原值是否为有效改动;清空(undefined/null)视为放弃修改。 */
+/**
+ * 判断草稿值相对原值是否为有效改动。draft undefined=放弃修改;
+ * draft null=显式清除(仅原值存在时构成改动,patch 携带 null 由后端移除
+ * 对应选项节点恢复工具缺省);原本为空的文本列被清空不算改动。
+ */
 function valueChanged(orig: unknown, draft: unknown): boolean {
-  if (draft === undefined || draft === null) return false
+  if (draft === undefined) return false
+  if (draft === null) return orig !== undefined && orig !== null
   // 原本为空的文本列被清空不算改动,避免把空串写回原无此键的条目
   if (draft === '' && (orig === undefined || orig === null || orig === '')) return false
   if (Array.isArray(orig) || Array.isArray(draft)) {
@@ -217,7 +222,8 @@ function cellValue(index: number, key: string): unknown {
   return drafts.value[index]?.fields[key]
 }
 
-/** 写回单元格;undefined(数字列清空)等价于放弃该列修改。行不存在时忽略。 */
+/** 写回单元格;undefined 等价于放弃该列修改,null 保留进草稿(显式清除
+ * 语义,保存时随 patch 提交)。行不存在时忽略。 */
 function setCell(index: number, key: string, v: unknown): void {
   const row = drafts.value[index]
   if (!row) return
@@ -292,7 +298,7 @@ function openEditDialog(index: number) {
   editVisible.value = true
 }
 
-/** 写回编辑弹窗表单;undefined(数字列清空)等价于放弃该列修改。 */
+/** 写回编辑弹窗表单;undefined 等价于放弃该列修改,null 保留(显式清除语义)。 */
 function setEditField(key: string, v: unknown): void {
   if (v === undefined) {
     delete editForm.value[key]

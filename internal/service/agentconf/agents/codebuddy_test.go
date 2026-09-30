@@ -211,13 +211,21 @@ func TestCodeBuddy_Snapshot_列描述(t *testing.T) {
 	if c := findColumn(t, snap.Columns, "vendor"); !c.Readonly {
 		t.Errorf("vendor 应为只读列,实际 %+v", c)
 	}
+	// 档位两列候选 = 标准五档合并文件自定义档位(夹具 [high max] 已含于标准档)
+	wantLevels := []string{"low", "medium", "high", "xhigh", "max"}
 	effort := findColumn(t, snap.Columns, "default_effort")
-	if effort.Type != "select" || len(effort.Options) != 2 || effort.Options[0].Value != "high" || effort.Options[1].Value != "max" {
-		t.Errorf("default_effort 应为含 2 个选项的下拉,实际 %+v", effort)
+	if effort.Type != "select" || len(effort.Options) != len(wantLevels) {
+		t.Fatalf("default_effort 应为含标准五档的下拉,实际 %+v", effort)
 	}
-	// supported_efforts 列:白名单本就支持,列描述使其可见可编辑
-	if c := findColumn(t, snap.Columns, "supported_efforts"); c.Type != "list" || c.Readonly {
-		t.Errorf("supported_efforts 应为可编辑 list 列,实际 %+v", c)
+	for i, want := range wantLevels {
+		if effort.Options[i].Value != want {
+			t.Errorf("default_effort 选项[%d] 应为 %s,实际 %v", i, want, effort.Options[i].Value)
+		}
+	}
+	// supported_efforts 列:白名单本就支持,列描述使其可见可编辑,同享五档候选
+	levelsCol := findColumn(t, snap.Columns, "supported_efforts")
+	if levelsCol.Type != "list" || levelsCol.Readonly || len(levelsCol.Options) != len(wantLevels) {
+		t.Errorf("supported_efforts 应为带五档候选的可编辑 list 列,实际 %+v", levelsCol)
 	}
 	// 全部布尔与数字列均可编辑;CodeBuddy 无 use_custom_protocol 列
 	for key, wantType := range map[string]string{
@@ -449,6 +457,48 @@ func TestCodeBuddy_ApplyModels_supportedEfforts写回(t *testing.T) {
 	}
 }
 
+// TestCodeBuddy_ApplyModels_数字键null清除 数字键提交 null 为显式清除:
+// 移除该键恢复"文件未写"缺省态,返回清单不再携带,写回有备份,未清除的
+// 键与凭据零接触。
+func TestCodeBuddy_ApplyModels_数字键null清除(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, testCodeBuddyJSON)
+
+	patches := []agentconf.ModelPatch{{ModelID: "deepseek-v4-pro", Fields: map[string]any{
+		"max_input_tokens": nil,
+		"temperature":      nil,
+	}}}
+	latest, err := NewCodeBuddyAgent(home).ApplyModels(context.Background(), patches, dataDir)
+	if err != nil {
+		t.Fatalf("ApplyModels 失败: %v", err)
+	}
+	first := entryOf(t, latest, "deepseek-v4-pro")
+	if _, exists := first["max_input_tokens"]; exists {
+		t.Error("清除后清单不应再携带 max_input_tokens")
+	}
+	if _, exists := first["temperature"]; exists {
+		t.Error("清除后清单不应再携带 temperature")
+	}
+	m0 := cbFixtureElement(t, cbFixtureModels(t, home), 0)
+	if _, exists := m0["maxInputTokens"]; exists {
+		t.Error("文件中 maxInputTokens 应被移除")
+	}
+	if _, exists := m0["temperature"]; exists {
+		t.Error("文件中 temperature 应被移除")
+	}
+	// 未提交清除的数字键与凭据零接触
+	if n, ok := m0["maxOutputTokens"].(json.Number); !ok || n.String() != "8192" {
+		t.Errorf("未清除的 maxOutputTokens 应原样保留,实际 %v(%T)", m0["maxOutputTokens"], m0["maxOutputTokens"])
+	}
+	if key := stringOf(m0["apiKey"]); key != cbFixtureKey {
+		t.Errorf("apiKey 必须原样保留,实际 %q", key)
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 1 {
+		t.Errorf("清除写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
 // TestCodeBuddy_ApplyModels_首个匹配定位 存在重复 id 时仅首个元素被修改。
 func TestCodeBuddy_ApplyModels_首个匹配定位(t *testing.T) {
 	home := t.TempDir()
@@ -510,10 +560,13 @@ func TestCodeBuddy_ApplyModels_非法值类型_4403(t *testing.T) {
 		fields map[string]any
 	}{
 		{"name 为数字", map[string]any{"name": 123}},
+		{"name 为 null", map[string]any{"name": nil}},
 		{"能力开关为字符串", map[string]any{"supports_tool_call": "yes"}},
+		{"能力开关为 null", map[string]any{"supports_tool_call": nil}},
 		{"推理强度为数字", map[string]any{"default_effort": 3}},
 		{"强度数组为字符串", map[string]any{"supported_efforts": "high"}},
 		{"强度数组含非字符串", map[string]any{"supported_efforts": []any{"high", 1}}},
+		{"强度数组为 null", map[string]any{"supported_efforts": nil}},
 		{"disabled 为字符串", map[string]any{"disabled": "true"}},
 		{"only_reasoning 为字符串", map[string]any{"only_reasoning": 1}},
 		{"can_disable_thinking 为字符串", map[string]any{"can_disable_thinking": "yes"}},
@@ -856,6 +909,36 @@ func TestCodeBuddy_AddModels_全skip_零落盘(t *testing.T) {
 	}
 	if arr := cbFixtureModels(t, home); len(arr) != 3 {
 		t.Errorf("全 skip 时文件不得被改写,实际 %d 条", len(arr))
+	}
+}
+
+// TestCodeBuddy_AddModels_结果数组非null 全部新增(无跳过)的成功路径:
+// added/skipped/entries 序列化必须为数组(空时 [])而非 null——前端成功分支
+// 直接取 result.skipped.length,null 会抛 TypeError 中断关弹窗与清单刷新。
+func TestCodeBuddy_AddModels_结果数组非null(t *testing.T) {
+	home := t.TempDir()
+	writeCodeBuddyFixture(t, home, `{"models": []}`)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m1", "m2"},
+		Source:   agentconf.ModelSource{EndpointURL: "https://s/v1/chat/completions", APIKey: "sk-x"},
+	}
+	result, err := NewCodeBuddyAgent(home).AddModels(context.Background(), req, t.TempDir())
+	if err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("结果序列化失败: %v", err)
+	}
+	s := string(raw)
+	for _, want := range []string{`"added":["m1","m2"]`, `"skipped":[]`, `"entries":[`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("结果 JSON 应包含 %s,实际 %s", want, s)
+		}
+	}
+	if strings.Contains(s, ":null") {
+		t.Errorf("结果 JSON 不得出现 null 数组,实际 %s", s)
 	}
 }
 

@@ -2,8 +2,8 @@
 // 表格单元格与编辑弹窗共用的受控字段输入组件:按列类型渲染对应的
 // Element Plus 输入控件(readonly→纯文本、bool→开关、number→数字、
 // list→多选、select→下拉、text→输入)。取值归一化内聚在此,父级只
-// 接收归一化后的新值:number 清空发布 undefined(等价放弃该列修改),
-// list 发布字符串数组,bool 恒发布布尔值。
+// 接收归一化后的新值:number 清空发布 null(显式清除,后端移除对应
+// 选项恢复缺省),list 发布字符串数组,bool 恒发布布尔值。
 import type { AgentFieldSpec } from '@/types/agent'
 
 defineProps<{ col: AgentFieldSpec; modelValue: unknown }>()
@@ -41,9 +41,10 @@ function cellText(v: unknown): string {
   return String(v)
 }
 
-/** 发布数字列新值;清空(null)发布 undefined,由父级决定丢弃该列修改。 */
+/** 发布数字列新值;清空(null/undefined)发布 null=显式清除该选项,
+ * 由父级纳入 patch、后端移除对应配置节点。 */
 function emitNum(v: number | null | undefined): void {
-  emit('update:modelValue', v ?? undefined)
+  emit('update:modelValue', v ?? null)
 }
 
 /** 发布布尔列新值;开关默认只发布尔值。 */

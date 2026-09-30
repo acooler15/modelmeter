@@ -466,8 +466,10 @@ func TestZCode_ApplyModels_非法值类型_4403(t *testing.T) {
 		fields map[string]any
 	}{
 		{"enabled 为字符串", map[string]any{"enabled": "yes"}},
+		{"enabled 为 null", map[string]any{"enabled": nil}},
 		{"context_window 为字符串", map[string]any{"context_window": "128k"}},
 		{"max_output_tokens 为布尔", map[string]any{"max_output_tokens": true}},
+		{"reasoning_levels 含空串", map[string]any{"reasoning_levels": []any{"", "low"}}},
 	}
 	for _, tc := range cases {
 		patches := []agentconf.ModelPatch{{ProviderID: "deepseek", ModelID: "deepseek-chat", Fields: tc.fields}}
@@ -476,6 +478,73 @@ func TestZCode_ApplyModels_非法值类型_4403(t *testing.T) {
 		if !errors.As(err, &ae) || ae.Code != apperr.CodeAgentInvalid {
 			t.Errorf("%s: 期望 4403,实际 %v", tc.name, err)
 		}
+	}
+}
+
+// TestZCode_ApplyModels_选项清除 数字与档位键的显式清除(nil / 空数组):
+// 选项节点整体移除、变空的中间容器一并回收、仍有人用的容器保留,返回清单
+// 不再携带被清选项,写回有备份——使规则回到"选项未写"状态交由 ZCode 智能
+// 配置补默认值。
+func TestZCode_ApplyModels_选项清除(t *testing.T) {
+	// 清除 context_window:properties 尚有 inputFormat,容器保留
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	latest, err := NewZCodeAgent(home).ApplyModels(context.Background(),
+		[]agentconf.ModelPatch{{ProviderID: "deepseek", ModelID: "deepseek-chat",
+			Fields: map[string]any{"context_window": nil}}}, dataDir)
+	if err != nil {
+		t.Fatalf("ApplyModels 失败: %v", err)
+	}
+	if _, exists := entryFieldsOf(t, latest, "deepseek", "deepseek-chat")["context_window"]; exists {
+		t.Error("清除后清单不应再携带 context_window")
+	}
+	rule0 := fixtureRule(t, readFixtureTree(t, home), "deepseek", "deepseek-chat")
+	if _, exists := mapGetObj(rule0, "config", "properties")["contextWindow"]; exists {
+		t.Error("properties.contextWindow 应被移除")
+	}
+	if b, ok := boolOf(mapGetObj(rule0, "config", "properties", "inputFormat")["supportsImage"]); !ok || !b {
+		t.Errorf("仍有人用的 properties 容器应保留,inputFormat.supportsImage 实际 %v", mapGetObj(rule0, "config", "properties", "inputFormat")["supportsImage"])
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 1 {
+		t.Errorf("清除写回应产生 1 份备份,实际 %d", got)
+	}
+
+	// 同时清除 max_output_tokens 与 reasoning_levels:optionSpecs 变空,整体回收
+	home2 := t.TempDir()
+	writeZCodeFixture(t, home2, testProviderConfig)
+	latest2, err := NewZCodeAgent(home2).ApplyModels(context.Background(),
+		[]agentconf.ModelPatch{{ProviderID: "deepseek", ModelID: "deepseek-chat",
+			Fields: map[string]any{"max_output_tokens": nil, "reasoning_levels": []any{}}}}, dataDir)
+	if err != nil {
+		t.Fatalf("ApplyModels 失败: %v", err)
+	}
+	cleared := entryFieldsOf(t, latest2, "deepseek", "deepseek-chat")
+	if _, exists := cleared["max_output_tokens"]; exists {
+		t.Error("清除后清单不应再携带 max_output_tokens")
+	}
+	if _, exists := cleared["reasoning_levels"]; exists {
+		t.Error("清除后清单不应再携带 reasoning_levels")
+	}
+	rule1 := fixtureRule(t, readFixtureTree(t, home2), "deepseek", "deepseek-chat")
+	if _, exists := mapGetObj(rule1, "config")["optionSpecs"]; exists {
+		t.Error("子选项清空后 optionSpecs 容器应整体回收")
+	}
+	if b, ok := boolOf(mapGetObj(rule1, "config")["enabled"]); !ok || b {
+		t.Errorf("未提交的 enabled 应原样保留为 false,实际 %v", mapGetObj(rule1, "config")["enabled"])
+	}
+
+	// 对本就未写选项的模型清除:静默成功且不凭空创建空规则节点
+	home3 := t.TempDir()
+	writeZCodeFixture(t, home3, testProviderConfig)
+	if _, err := NewZCodeAgent(home3).ApplyModels(context.Background(),
+		[]agentconf.ModelPatch{{ProviderID: "deepseek", ModelID: "my-custom-model",
+			Fields: map[string]any{"max_output_tokens": nil}}}, t.TempDir()); err != nil {
+		t.Fatalf("对未写选项的模型清除不应报错: %v", err)
+	}
+	if _, ok := fixtureRuleOK(readFixtureTree(t, home3), "deepseek", "my-custom-model"); ok {
+		t.Error("纯清除补丁不得为无规则节点的模型创建空节点")
 	}
 }
 
@@ -1245,6 +1314,37 @@ func TestZCode_AddModels_挂已有供应商(t *testing.T) {
 	}
 	if got := backupCount(t, dataDir, "zcode"); got != 1 {
 		t.Errorf("挂靠写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestZCode_AddModels_结果数组非null 全部新增(无跳过)的成功路径:
+// added/skipped/entries 序列化必须为数组(空时 [])而非 null——前端成功分支
+// 直接取 result.skipped.length,null 会抛 TypeError 中断关弹窗与清单刷新。
+func TestZCode_AddModels_结果数组非null(t *testing.T) {
+	home := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m1", "m2"},
+		Source:   agentconf.ModelSource{BaseURL: "https://api.example.com/v1"},
+		Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: "deepseek"},
+	}
+	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, t.TempDir())
+	if err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("结果序列化失败: %v", err)
+	}
+	s := string(raw)
+	for _, want := range []string{`"added":["m1","m2"]`, `"skipped":[]`, `"entries":[`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("结果 JSON 应包含 %s,实际 %s", want, s)
+		}
+	}
+	if strings.Contains(s, ":null") {
+		t.Errorf("结果 JSON 不得出现 null 数组,实际 %s", s)
 	}
 }
 
