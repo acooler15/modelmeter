@@ -1,10 +1,13 @@
-// Agent 模型配置接口封装:列表/详情/模型清单/批量写回/默认模型设置/还原。
+// Agent 模型配置接口封装:列表/详情/模型清单/批量写回/增删模型/默认模型设置/还原。
 import { httpGet, httpPost, httpPut } from './http'
 
 import type {
+  AgentAddModelsPayload,
+  AgentAddModelsResult,
   AgentDefaultModelPatch,
   AgentModelEntry,
   AgentModelPatch,
+  AgentModelRef,
   AgentSnapshot,
 } from '@/types/agent'
 
@@ -29,6 +32,31 @@ export function updateAgentModels(
   patches: AgentModelPatch[],
 ): Promise<AgentModelEntry[]> {
   return httpPut<AgentModelEntry[]>(`/api/agents/${encodeURIComponent(name)}/models`, { patches })
+}
+
+/** 批量删除模型;后端先整体校验(定位不存在报 4404 整批拒绝)再一次备份一次写回,返回最新清单。 */
+export function removeAgentModels(
+  name: string,
+  targets: AgentModelRef[],
+): Promise<AgentModelEntry[]> {
+  return httpPost<AgentModelEntry[]>(
+    `/api/agents/${encodeURIComponent(name)}/models/remove`,
+    { targets },
+  )
+}
+
+/**
+ * 从接口添加模型:后端按 provider_id 从接口记录装配来源(含凭据),凭据
+ * 不经过前端、不进响应;已存在的 model_id 逐条跳过,返回最新清单与成败明细。
+ */
+export function addAgentModels(
+  name: string,
+  payload: AgentAddModelsPayload,
+): Promise<AgentAddModelsResult> {
+  return httpPost<AgentAddModelsResult>(
+    `/api/agents/${encodeURIComponent(name)}/models/add`,
+    payload,
+  )
 }
 
 /**

@@ -19,10 +19,18 @@
 // reasoning.canDisableThinking(CodeBuddy 无 useCustomProtocol 键);按 id
 // 首个匹配定位数组元素,reasoning 节点缺失时创建;id、vendor、apiKey、
 // availableModels 及未知键逐条原样保留。顶层形态恒为对象,写回时把(元素
-// 被原地修改的)数组回填 models 键,其余顶层键零丢失。模型条目的新增/删除
-// 与 apiKey 管理一律引导用户到 CodeBuddy 原生工具操作。CodeBuddy 无"默认
-// 模型"概念:能力位恒 false,不实现 DefaultModelSetter(handler 对其默认
-// 模型请求报 4405)。
+// 被原地修改的)数组回填 models 键,其余顶层键零丢失。
+//
+// 模型删除(RemoveModels)与添加(AddModels):删除按定位过滤数组元素(非
+// 对象元素原样保留),顶层 availableModels 同步移除命中的 id;添加按来源接口
+// 追加条目(恰含 id/name/vendor/url/apiKey 五键,url 为完整 endpoint,由
+// handler 从 Base URL 派生),apiKey 来自 ModelMeter 数据库装配的 Source,属
+// "新增写入凭据"的显式例外(经用户界面确认),既有条目的凭据仍零接触;
+// availableModels 为数组且不含该 id 时追加,缺失不创建。日志只记数量与定位键,
+// 绝不记 url/key 值。
+//
+// CodeBuddy 无"默认模型"概念:能力位恒 false,不实现 DefaultModelSetter
+// (handler 对其默认模型请求报 4405)。
 package agents
 
 import (
@@ -61,7 +69,7 @@ func (c *CodeBuddyAgent) modelsPath() string {
 
 // cbManageHint 管理边界提示,卡片说明共用。CodeBuddy 运行时对 models.json
 // 做文件监听(1s debounce)热同步,通常无需重启,仅兜底提示。
-const cbManageHint = "API Key 与模型条目的增删请在 CodeBuddy 原生工具中管理,本页仅调整模型配置;" +
+const cbManageHint = "既有条目的 API Key 请在 CodeBuddy 原生工具中管理,本页支持模型清单的增删与配置调整;" +
 	"修改后 CodeBuddy 会自动加载,若未生效请重启 CodeBuddy"
 
 // 白名单字段键:Fields 与 patch 中允许出现的键。
@@ -91,27 +99,32 @@ const (
 
 // Snapshot 实现 Agent 接口:配置文件存在即 found;default_effort 下拉选项取
 // 全部条目 supportedEfforts 的并集(保序去重),无选项时降级为文本输入。
-// CodeBuddy 无"默认模型"概念,能力位恒 false(零值)。
+// 增删模型能力位恒置 true(能力是工具属性,文件缺失时同样成立);CodeBuddy
+// 无"默认模型"概念,该能力位恒 false(零值)。
 func (c *CodeBuddyAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	path := c.modelsPath()
 	if !agentconf.FileExists(path) {
 		return agentconf.Snapshot{
-			Name:        c.Name(),
-			DisplayName: c.DisplayName(),
-			Status:      agentconf.StatusNotFound,
-			ConfigPath:  path,
-			Columns:     codeBuddyColumns(nil),
+			Name:                 c.Name(),
+			DisplayName:          c.DisplayName(),
+			Status:               agentconf.StatusNotFound,
+			ConfigPath:           path,
+			Columns:              codeBuddyColumns(nil),
+			SupportsAddModels:    true,
+			SupportsRemoveModels: true,
 			Message: "未找到 CodeBuddy 配置文件(~/.codebuddy/models.json)," +
 				"请确认 CodeBuddy 已安装并至少运行过一次",
 		}
 	}
 	return agentconf.Snapshot{
-		Name:        c.Name(),
-		DisplayName: c.DisplayName(),
-		Status:      agentconf.StatusFound,
-		ConfigPath:  path,
-		Columns:     codeBuddyColumns(c.collectEfforts()),
-		Message:     cbManageHint,
+		Name:                 c.Name(),
+		DisplayName:          c.DisplayName(),
+		Status:               agentconf.StatusFound,
+		ConfigPath:           path,
+		Columns:              codeBuddyColumns(c.collectEfforts()),
+		SupportsAddModels:    true,
+		SupportsRemoveModels: true,
+		Message:              cbManageHint,
 	}
 }
 
@@ -212,6 +225,120 @@ func (c *CodeBuddyAgent) ApplyModels(ctx context.Context, patches []agentconf.Mo
 	}
 	slog.Info("CodeBuddy 模型配置已更新", "patches", len(patches), "fields", patchChangedKeys(patches))
 	return c.Models(ctx)
+}
+
+// RemoveModels 实现 Agent 接口:先整体校验全部定位(按 id 首个匹配口径,任一
+// 不存在报 4404,整批拒绝避免半批生效),再一次备份、过滤数组、原子写回,返回
+// 最新清单。空 refs 视为只读:不备份、不落盘,直接返回现状。顶层 availableModels
+// 同步移除命中的 id(该键缺失或不是数组则不触碰)。
+func (c *CodeBuddyAgent) RemoveModels(ctx context.Context, refs []agentconf.ModelRef, dataDir string) ([]agentconf.ModelEntry, error) {
+	root, err := c.readDoc()
+	if err != nil {
+		return nil, err
+	}
+	models := codeBuddyModelsOf(root)
+	if len(refs) == 0 {
+		// 空删除视为只读:不备份、不落盘,直接返回现状
+		return codeBuddyEntries(models), nil
+	}
+	for _, ref := range refs {
+		if locateCodeBuddy(models, ref.ModelID) == nil {
+			return nil, apperr.New(apperr.CodeAgentNotFound, "模型不存在:"+ref.ModelID)
+		}
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(c.modelsPath(), c.Name(), dataDir); err != nil {
+		return nil, apperr.Wrap(apperr.CodeAgentFileIO, "备份 CodeBuddy 配置失败", err)
+	}
+	for _, ref := range refs {
+		models = removeCodeBuddyEntry(models, ref.ModelID)
+	}
+	// 过滤后的数组回填 models 键,并按 id 同步 availableModels(存在则移除命中项,
+	// 缺失或不是数组则不创建不触碰);其余顶层键不触碰即零丢失
+	root[cbFileModels] = models
+	if arr, ok := root["availableModels"].([]any); ok {
+		for _, ref := range refs {
+			arr = removeStringValues(arr, ref.ModelID)
+		}
+		root["availableModels"] = arr
+	}
+	if err := agentconf.WriteJSONFile(c.modelsPath(), root); err != nil {
+		return nil, apperr.Wrap(apperr.CodeAgentFileIO, "写回 CodeBuddy 配置失败", err)
+	}
+	// 日志只记删除数量与定位键,不记任何配置值
+	slog.Info("CodeBuddy 模型已删除", "count", len(refs), "targets", refKeys(refs))
+	return c.Models(ctx)
+}
+
+// removeCodeBuddyEntry 过滤模型数组:移除对象元素中 id 等于 modelID 的条目,
+// 非对象元素原样保留。
+func removeCodeBuddyEntry(arr []any, modelID string) []any {
+	out := make([]any, 0, len(arr))
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok && stringOf(m["id"]) == modelID {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// AddModels 实现 Agent 接口:按来源接口逐条追加模型,数组内已有同 id 条目的
+// 逐条跳过,全部跳过时不备份不落盘。新条目恰含 id/name/vendor/url/apiKey 五键
+// (url 为完整 endpoint 语义,由 handler 从 Base URL 派生;apiKey 来自 ModelMeter
+// 数据库装配的 Source,属"新增写入凭据"的显式例外),其余字段交给 CodeBuddy
+// 缺省语义与用户后续编辑。顶层 availableModels 为数组且不含该 id 时追加
+// (缺失不创建)。日志只记数量,不记 url/key 值。
+func (c *CodeBuddyAgent) AddModels(ctx context.Context, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
+	root, err := c.readDoc()
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	models := codeBuddyModelsOf(root)
+	if len(req.ModelIDs) == 0 {
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid, "model_ids 不能为空")
+	}
+	// 逐 id 判重:数组内已有同 id 条目的跳过;新增 id 顺带登记,处理请求内重复
+	existing := make(map[string]bool, len(models))
+	for _, e := range models {
+		if m, ok := e.(map[string]any); ok {
+			if id := stringOf(m["id"]); id != "" {
+				existing[id] = true
+			}
+		}
+	}
+	added, skipped := splitAddIDs(req.ModelIDs, existing)
+	if len(added) == 0 {
+		// 全部已存在:零落盘直接返回,不产生备份
+		return agentconf.AddModelsResult{Entries: codeBuddyEntries(models), Added: added, Skipped: skipped}, nil
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(c.modelsPath(), c.Name(), dataDir); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "备份 CodeBuddy 配置失败", err)
+	}
+	for _, id := range added {
+		models = append(models, newFlatModelEntry(id, req.Source))
+	}
+	// 数组回填 models 键,并按 id 同步 availableModels(存在且不含该 id 时追加,
+	// 缺失不创建);其余顶层键不触碰即零丢失
+	root[cbFileModels] = models
+	if arr, ok := root["availableModels"].([]any); ok {
+		for _, id := range added {
+			if !stringArrayContains(arr, id) {
+				arr = append(arr, id)
+			}
+		}
+		root["availableModels"] = arr
+	}
+	if err := agentconf.WriteJSONFile(c.modelsPath(), root); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "写回 CodeBuddy 配置失败", err)
+	}
+	slog.Info("CodeBuddy 模型已添加", "count", len(added), "skipped", len(skipped))
+	entries, err := c.Models(ctx)
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	return agentconf.AddModelsResult{Entries: entries, Added: added, Skipped: skipped}, nil
 }
 
 // readDoc 读取配置文件并用 json.Decoder+UseNumber 解析为根对象(数字经

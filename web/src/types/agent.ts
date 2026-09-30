@@ -51,6 +51,12 @@ export interface AgentSnapshot {
   supports_default_model: boolean
   /** 当前默认模型;缺省/null=未设置或不支持该能力。 */
   default_model?: AgentDefaultModel | null
+  /** 能力位:该工具是否支持从接口添加模型条目(工具属性,未找到配置时同样成立)。 */
+  supports_add_models: boolean
+  /** 能力位:该工具是否支持删除模型条目(同上)。 */
+  supports_remove_models: boolean
+  /** 添加模型的可挂靠供应商候选(非敏感字段);仅 ZCode 且配置 found 时填充。 */
+  add_targets?: AgentAddTarget[]
 }
 
 /** 模型清单中的一个模型条目(凭据绝不包含)。 */
@@ -71,4 +77,45 @@ export interface AgentModelPatch {
   model_id: string
   /** 仅白名单键;含白名单外键会被后端以 4403 拒绝。 */
   fields: Record<string, unknown>
+}
+
+/** 删除目标定位:provider_id 仅 ZCode 有,WorkBuddy/CodeBuddy 为空。 */
+export interface AgentModelRef {
+  provider_id?: string
+  model_id: string
+}
+
+/** ZCode 添加模型的可挂靠供应商候选(非敏感字段,随 Snapshot 下发)。 */
+export interface AgentAddTarget {
+  provider_id: string
+  provider_name?: string
+}
+
+/** ZCode 落点规格;WorkBuddy/CodeBuddy 整体忽略(前端直接省略该字段)。 */
+export interface AgentAddTargetSpec {
+  /** 落点模式,缺省按 existing 处理。 */
+  mode?: 'existing' | 'new'
+  /** mode=existing 时必填:挂靠的供应商 ID。 */
+  provider_id?: string
+  /** mode=new 的供应商显示名,空回退接口名。 */
+  provider_name?: string
+  /** mode=new 的 API 协议,空缺省 openai-chat-completions。 */
+  api_type?: 'openai-chat-completions' | 'openai-responses'
+}
+
+/** 从接口添加模型的请求体;凭据不在其中,由后端从接口记录装配。 */
+export interface AgentAddModelsPayload {
+  provider_id: number
+  model_ids: string[]
+  /** 接口地址覆盖值;空表示沿用接口记录的 Base URL。 */
+  base_url?: string
+  /** 仅 ZCode 需要;其余工具省略。 */
+  target?: AgentAddTargetSpec
+}
+
+/** 添加结果:最新清单 + 逐项成败,前端据此反馈"成功 N/跳过 M"。 */
+export interface AgentAddModelsResult {
+  entries: AgentModelEntry[]
+  added: string[]
+  skipped: string[]
 }

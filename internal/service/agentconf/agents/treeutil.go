@@ -156,6 +156,45 @@ func stringSliceValue(v any) []any {
 	return nil
 }
 
+// removeStringValues 返回移除全部等于 target 的字符串元素后的新数组,
+// 非字符串元素原样保留;供模型清单数组(如 ZCode modelOrder)与
+// availableModels 按 id 移除使用。
+func removeStringValues(arr []any, target string) []any {
+	out := make([]any, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok && s == target {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// stringArrayContains 判断 any 数组中是否已有等于 target 的字符串元素,
+// 供 availableModels 追加判重使用。
+func stringArrayContains(arr []any, target string) bool {
+	for _, e := range arr {
+		if s, ok := e.(string); ok && s == target {
+			return true
+		}
+	}
+	return false
+}
+
+// newFlatModelEntry 构造 WorkBuddy/CodeBuddy 的新增模型条目:恰含 id/name/
+// vendor/url/apiKey 五键(url 为完整 endpoint,由 handler 从 Base URL 派生;
+// apiKey 来自 ModelMeter 数据库装配的 Source,属"新增写入凭据"的显式例外),
+// 其余字段交给工具缺省语义与用户后续编辑。
+func newFlatModelEntry(modelID string, source agentconf.ModelSource) map[string]any {
+	return map[string]any{
+		"id":     modelID,
+		"name":   modelID,
+		"vendor": source.ProviderName,
+		"url":    source.EndpointURL,
+		"apiKey": source.APIKey,
+	}
+}
+
 // boolDefault 宽容取布尔:缺失或非布尔返回 false。
 func boolDefault(v any) bool {
 	b, _ := boolOf(v)

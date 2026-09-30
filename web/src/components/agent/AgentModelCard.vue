@@ -1,31 +1,40 @@
 <script setup lang="ts">
 // Agent 模型配置卡片:展示单个 Agent 工具的配置现状与模型清单。
 // 表格列由后端 Snapshot.Columns 驱动,行数据为本地编辑草稿;保存时仅收集
-// 有改动的行与键,批量提交(后端写回前自动备份)。支持"默认模型"能力的工具
-// (能力位 supports_default_model)额外渲染供应商/模型/档位三级选择与清除。
-// 未找到配置时只展示中文指引,不渲染表格。请求统一走 useRequest,失败自动
-// 弹中文提示。
+// 有改动的行与键,批量提交(后端写回前自动备份)。单元格与编辑弹窗共用
+// AgentFieldInput 受控组件。支持删除能力的工具(能力位 supports_remove_models)
+// 额外提供多选批量删除与单行删除(一次请求一次备份一次写回);支持添加能力
+// 的工具(supports_add_models)提供"从接口添加模型"弹窗。支持"默认模型"
+// 能力的工具(supports_default_model)额外渲染供应商/模型/档位三级选择与清除。
+// 未找到配置时只展示中文指引,不渲染表格与增删改入口。请求统一走 useRequest,
+// 失败自动弹中文提示。
 import { computed, onMounted, ref, watch } from 'vue'
 
+import AgentFieldInput from '@/components/agent/AgentFieldInput.vue'
+import AgentImportModelsDialog from '@/components/agent/AgentImportModelsDialog.vue'
 import {
   listAgentModels,
+  removeAgentModels,
   restoreAgent,
   setDefaultAgentModel,
   updateAgentModels,
 } from '@/api/agent'
 import { useRequest } from '@/composables/useRequest'
 import type {
+  AgentAddModelsResult,
   AgentDefaultModelPatch,
   AgentFieldSpec,
   AgentModelEntry,
   AgentModelPatch,
+  AgentModelRef,
   AgentSnapshot,
 } from '@/types/agent'
 
 const props = defineProps<{ snapshot: AgentSnapshot }>()
 
-// 还原/默认模型写回成功后配置状态可能变化,父级需刷新 Agent 列表
-const emit = defineEmits<{ restored: []; defaultModelChanged: [] }>()
+// 写回成功后配置状态可能变化,父级需刷新 Agent 列表;providerCreated 表示
+// ZCode 新建了供应商(落点候选 add_targets 已变化),同样需要父级重拉列表
+const emit = defineEmits<{ restored: []; defaultModelChanged: []; providerCreated: [] }>()
 
 // 服务端最新清单与本地编辑草稿按下标配对,逐列比对生成增量补丁
 const originals = ref<AgentModelEntry[]>([])
@@ -37,12 +46,16 @@ const {
   run: runLoadModels,
 } = useRequest(listAgentModels)
 const { loading: saving, run: runSave } = useRequest(updateAgentModels)
+const { loading: removing, run: runRemoveModels } = useRequest(removeAgentModels)
 const { loading: savingDefault, run: runSaveDefaultModel } = useRequest(setDefaultAgentModel)
 const { loading: restoring, run: runRestore } = useRequest(restoreAgent)
 
 const isFound = computed(() => props.snapshot.status === 'found')
 // 只有非只读列可编辑,补丁收集也只针对这些列
 const editableColumns = computed(() => props.snapshot.columns.filter((col) => !col.readonly))
+// 删除/添加入口按能力位 + 配置已找到双重控制
+const canRemoveModels = computed(() => isFound.value && props.snapshot.supports_remove_models)
+const canAddModels = computed(() => isFound.value && props.snapshot.supports_add_models)
 
 // "默认模型"区编辑状态:随 Snapshot 同步(父级刷新后重置为服务端现状)
 const defaultProvider = ref('')
@@ -137,10 +150,18 @@ async function handleClearDefaultModel() {
   emit('defaultModelChanged')
 }
 
-/** 用服务端清单替换本地数据并重置草稿。 */
+// 表格多选:选中的行为草稿对象,自带定位键(provider_id/model_id 不可编辑)
+const selectedRows = ref<AgentModelEntry[]>([])
+
+function onSelectionChange(rows: AgentModelEntry[]) {
+  selectedRows.value = rows
+}
+
+/** 用服务端清单替换本地数据并重置草稿与多选。 */
 function applyEntries(list: AgentModelEntry[]) {
   originals.value = list
   drafts.value = list.map((entry) => ({ ...entry, fields: { ...entry.fields } }))
+  selectedRows.value = []
 }
 
 /** 拉取模型清单;失败已由 useRequest 统一提示。 */
@@ -191,6 +212,133 @@ async function handleSave() {
   ElMessage.success('已写回,建议重启对应工具使配置生效')
 }
 
+/** 取草稿行某列的值;行不存在时返回 undefined。 */
+function cellValue(index: number, key: string): unknown {
+  return drafts.value[index]?.fields[key]
+}
+
+/** 写回单元格;undefined(数字列清空)等价于放弃该列修改。行不存在时忽略。 */
+function setCell(index: number, key: string, v: unknown): void {
+  const row = drafts.value[index]
+  if (!row) return
+  if (v === undefined) {
+    delete row.fields[key]
+    return
+  }
+  row.fields[key] = v
+}
+
+/** 按列类型给最小列宽:开关窄,数字与下拉适中,list 与文本较宽。 */
+function colWidth(col: AgentFieldSpec): number {
+  switch (col.type) {
+    case 'bool':
+      return 90
+    case 'number':
+    case 'select':
+      return 150
+    case 'list':
+      return 220
+    default:
+      return 180
+  }
+}
+
+// 删除通道:单行删除与批量删除复用,一次请求一次备份一次写回
+async function handleRemoveModels(refs: AgentModelRef[]) {
+  if (refs.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${refs.length} 个模型吗?删除前会自动备份原配置。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return // 用户取消,无需提示
+  }
+  const list = await runRemoveModels(props.snapshot.name, refs)
+  if (list === undefined) return
+  applyEntries(list)
+  ElMessage.success(`已删除 ${refs.length} 个模型,建议重启对应工具使配置生效`)
+}
+
+/** 单行删除入口。 */
+function handleRemoveRow(index: number) {
+  const orig = originals.value[index]
+  if (!orig) return
+  void handleRemoveModels([{ provider_id: orig.provider_id, model_id: orig.model_id }])
+}
+
+/** 批量删除入口:选中的行携带定位键。 */
+function handleRemoveSelected() {
+  const refs = selectedRows.value.map((row) => ({
+    provider_id: row.provider_id,
+    model_id: row.model_id,
+  }))
+  void handleRemoveModels(refs)
+}
+
+// 编辑弹窗:以该行当前草稿值初始化(含未保存的行内修改),确定即提交单行
+// patch 并用响应整体刷新,避免弹窗与行内两套脏状态叠加
+const editVisible = ref(false)
+const editIndex = ref(-1)
+const editForm = ref<Record<string, unknown>>({})
+
+/** 打开编辑弹窗。 */
+function openEditDialog(index: number) {
+  const draft = drafts.value[index]
+  if (!draft) return
+  editIndex.value = index
+  editForm.value = { ...draft.fields }
+  editVisible.value = true
+}
+
+/** 写回编辑弹窗表单;undefined(数字列清空)等价于放弃该列修改。 */
+function setEditField(key: string, v: unknown): void {
+  if (v === undefined) {
+    delete editForm.value[key]
+    return
+  }
+  editForm.value[key] = v
+}
+
+/** 弹窗内是否有相对服务端原值的有效改动。 */
+const hasEditChanges = computed(() => {
+  const orig = originals.value[editIndex.value]
+  if (!orig) return false
+  return editableColumns.value.some((col) =>
+    valueChanged(orig.fields[col.key], editForm.value[col.key]),
+  )
+})
+
+/** 提交编辑弹窗:只收集该行有改动的键,生成单行 patch 走白名单写回通道。 */
+async function handleEditSubmit() {
+  const orig = originals.value[editIndex.value]
+  if (!orig) return
+  const fields: Record<string, unknown> = {}
+  for (const col of editableColumns.value) {
+    if (valueChanged(orig.fields[col.key], editForm.value[col.key])) {
+      fields[col.key] = editForm.value[col.key]
+    }
+  }
+  const list = await runSave(props.snapshot.name, [
+    { provider_id: orig.provider_id, model_id: orig.model_id, fields },
+  ])
+  if (list === undefined) return // 失败已由 useRequest 统一提示
+  editVisible.value = false
+  applyEntries(list)
+  ElMessage.success('已写回,建议重启对应工具使配置生效')
+}
+
+// 从接口添加模型弹窗:添加成功后用响应的最新清单整体刷新
+const importVisible = ref(false)
+
+/** 添加成功:应用响应中的最新清单(同时丢弃未保存的行内草稿);
+ * 新建了供应商时通知父级刷新 Snapshot,保证落点候选 add_targets 及时更新。 */
+function handleImported(result: AgentAddModelsResult, createdProvider: boolean) {
+  applyEntries(result.entries)
+  if (createdProvider) emit('providerCreated')
+}
+
 /** 一键还原:二次确认后从最近一份备份还原,并刷新清单与配置状态。 */
 async function handleRestore() {
   if (!props.snapshot.config_path) return
@@ -211,89 +359,6 @@ async function handleRestore() {
   if (snap.status === 'found') void loadModels()
 }
 
-/** 取草稿行某列的原始值;行不存在时返回 undefined。 */
-function cellValue(index: number, key: string): unknown {
-  return drafts.value[index]?.fields[key]
-}
-
-/** 布尔列取值:非布尔值(含缺失)一律按关闭展示。 */
-function boolOf(v: unknown): boolean {
-  return typeof v === 'boolean' ? v : false
-}
-
-/** 数字列取值:缺失或非法时返回 undefined,输入框留空。 */
-function numOf(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
-}
-
-/** 文本列取值:缺失或非字符串时按空串展示。 */
-function strOf(v: unknown): string {
-  return typeof v === 'string' ? v : ''
-}
-
-/** 只读列展示文本:布尔转是/否,数组转逗号分隔,空值显示占位符。 */
-function cellText(v: unknown): string {
-  if (v === undefined || v === null || v === '') return '—'
-  if (typeof v === 'boolean') return v ? '是' : '否'
-  if (Array.isArray(v)) {
-    const text = v.map((item) => String(item)).join(', ')
-    return text === '' ? '—' : text
-  }
-  return String(v)
-}
-
-/** 写回布尔列;开关默认只发布尔值。行不存在时忽略。 */
-function setBool(index: number, key: string, v: string | number | boolean): void {
-  const row = drafts.value[index]
-  if (!row) return
-  row.fields[key] = v === true
-}
-
-/** 写回数字列;清空(null/undefined)等价于放弃该列修改。行不存在时忽略。 */
-function setNum(index: number, key: string, v: number | null | undefined): void {
-  const row = drafts.value[index]
-  if (!row) return
-  if (v === null || v === undefined) {
-    delete row.fields[key]
-    return
-  }
-  row.fields[key] = v
-}
-
-/** 写回文本/下拉列。行不存在时忽略。 */
-function setStr(index: number, key: string, v: string): void {
-  const row = drafts.value[index]
-  if (!row) return
-  row.fields[key] = v
-}
-
-/** list 列取值:缺失或非数组时按空数组展示。 */
-function listOf(v: unknown): string[] {
-  return Array.isArray(v) ? v.map((item) => String(item)) : []
-}
-
-/** 写回 list 列(字符串数组)。行不存在时忽略。 */
-function setList(index: number, key: string, v: string[]): void {
-  const row = drafts.value[index]
-  if (!row) return
-  row.fields[key] = v
-}
-
-/** 按列类型给最小列宽:开关窄,数字与下拉适中,list 与文本较宽。 */
-function colWidth(col: AgentFieldSpec): number {
-  switch (col.type) {
-    case 'bool':
-      return 90
-    case 'number':
-    case 'select':
-      return 150
-    case 'list':
-      return 220
-    default:
-      return 180
-  }
-}
-
 // 已找到配置的卡片挂载即拉取模型清单
 onMounted(() => {
   if (isFound.value) void loadModels()
@@ -311,6 +376,18 @@ onMounted(() => {
           </el-tag>
         </div>
         <div class="card-actions">
+          <el-button v-if="canAddModels" type="primary" @click="importVisible = true">
+            从接口添加模型
+          </el-button>
+          <el-button
+            v-if="canRemoveModels"
+            type="danger"
+            :disabled="selectedRows.length === 0"
+            :loading="removing"
+            @click="handleRemoveSelected"
+          >
+            批量删除
+          </el-button>
           <el-button type="primary" :disabled="!hasChanges" :loading="saving" @click="handleSave">
             保存修改
           </el-button>
@@ -336,7 +413,7 @@ onMounted(() => {
       :closable="false"
     />
 
-    <!-- 未找到配置:只展示指引,不渲染表格 -->
+    <!-- 未找到配置:只展示指引,不渲染表格与增删改入口 -->
     <el-empty v-if="!isFound" description="未找到配置文件,请按上方指引确认工具已安装并运行过一次" />
     <template v-else>
       <el-alert
@@ -410,7 +487,13 @@ onMounted(() => {
           </el-button>
         </div>
       </div>
-      <el-table v-loading="modelsLoading" :data="drafts" empty-text="该工具暂无模型条目">
+      <el-table
+        v-loading="modelsLoading"
+        :data="drafts"
+        empty-text="该工具暂无模型条目"
+        @selection-change="onSelectionChange"
+      >
+        <el-table-column v-if="canRemoveModels" type="selection" width="42" />
         <el-table-column
           v-for="col in snapshot.columns"
           :key="col.key"
@@ -418,55 +501,19 @@ onMounted(() => {
           :min-width="colWidth(col)"
         >
           <template #default="{ $index }">
-            <span v-if="col.readonly" class="readonly-cell">{{ cellText(cellValue($index, col.key)) }}</span>
-            <el-switch
-              v-else-if="col.type === 'bool'"
-              :model-value="boolOf(cellValue($index, col.key))"
-              @update:model-value="(v) => setBool($index, col.key, v)"
+            <AgentFieldInput
+              :col="col"
+              :model-value="cellValue($index, col.key)"
+              @update:model-value="(v) => setCell($index, col.key, v)"
             />
-            <el-input-number
-              v-else-if="col.type === 'number'"
-              class="number-input"
-              :controls="false"
-              :model-value="numOf(cellValue($index, col.key))"
-              @update:model-value="(v) => setNum($index, col.key, v)"
-            />
-            <el-select
-              v-else-if="col.type === 'list'"
-              class="cell-select"
-              multiple
-              filterable
-              allow-create
-              default-first-option
-              :model-value="listOf(cellValue($index, col.key))"
-              @update:model-value="(v) => setList($index, col.key, listOf(v))"
-            >
-              <el-option
-                v-for="opt in col.options ?? []"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-            <el-select
-              v-else-if="col.type === 'select'"
-              class="cell-select"
-              clearable
-              :model-value="strOf(cellValue($index, col.key))"
-              @update:model-value="(v) => setStr($index, col.key, v)"
-            >
-              <el-option
-                v-for="opt in col.options ?? []"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-            <el-input
-              v-else
-              :model-value="strOf(cellValue($index, col.key))"
-              @update:model-value="(v) => setStr($index, col.key, v)"
-            />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="110" fixed="right">
+          <template #default="{ $index }">
+            <el-button link type="primary" @click="openEditDialog($index)">编辑</el-button>
+            <el-button v-if="canRemoveModels" link type="danger" @click="handleRemoveRow($index)">
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -474,6 +521,34 @@ onMounted(() => {
         有 {{ changedPatches.length }} 行修改未保存;保存前会自动备份原配置
       </div>
     </template>
+
+    <!-- 编辑弹窗:按可编辑列渲染表单,确定即提交单行 patch -->
+    <el-dialog v-model="editVisible" title="编辑模型" width="560px">
+      <el-form label-width="110px">
+        <el-form-item v-for="col in editableColumns" :key="col.key" :label="col.label">
+          <AgentFieldInput
+            :col="col"
+            :model-value="editForm[col.key]"
+            @update:model-value="(v) => setEditField(col.key, v)"
+          />
+          <div v-if="col.help" class="field-help">{{ col.help }}</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!hasEditChanges" :loading="saving" @click="handleEditSubmit">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 从接口添加模型:能力位不满足时不渲染 -->
+    <AgentImportModelsDialog
+      v-if="canAddModels"
+      v-model:visible="importVisible"
+      :snapshot="snapshot"
+      @imported="handleImported"
+    />
   </el-card>
 </template>
 
@@ -545,14 +620,11 @@ onMounted(() => {
   width: 220px;
 }
 
-.readonly-cell {
-  color: var(--el-text-color-regular);
-  word-break: break-all;
-}
-
-.number-input,
-.cell-select {
+.field-help {
   width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .dirty-hint {

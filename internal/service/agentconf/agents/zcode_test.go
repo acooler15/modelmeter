@@ -111,16 +111,48 @@ func entryFieldsOf(t *testing.T, entries []agentconf.ModelEntry, providerID, mod
 	return nil
 }
 
+// entryFieldsOfOK 按 (providerId, modelId) 取条目字段;不存在的返回 ok=false,
+// 供"应已删除"类非致命断言使用。
+func entryFieldsOfOK(entries []agentconf.ModelEntry, providerID, modelID string) (map[string]any, bool) {
+	for _, e := range entries {
+		if e.ProviderID == providerID && e.ModelID == modelID {
+			return e.Fields, true
+		}
+	}
+	return nil, false
+}
+
+// fixtureRuleOK 取 providerModelRules 中指定 (providerId, modelId) 的规则节点;
+// 不存在的返回 ok=false(非致命)。
+func fixtureRuleOK(doc map[string]any, providerID, modelID string) (map[string]any, bool) {
+	for _, e := range anySlice(mapGetObj(doc, "config", "modelConfigRules")["providerModelRules"]) {
+		if m, ok := e.(map[string]any); ok &&
+			stringOf(m["providerId"]) == providerID && stringOf(m["modelId"]) == modelID {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
 // fixtureProviderRule 取 providerRules 中指定 providerId 的定义节点。
 func fixtureProviderRule(t *testing.T, doc map[string]any, providerID string) map[string]any {
 	t.Helper()
+	m, ok := fixtureProviderRuleOK(doc, providerID)
+	if !ok {
+		t.Fatalf("providerRules 中不存在 %s", providerID)
+	}
+	return m
+}
+
+// fixtureProviderRuleOK 取 providerRules 中指定 providerId 的定义节点;不存在
+// 的返回 ok=false(非致命)。
+func fixtureProviderRuleOK(doc map[string]any, providerID string) (map[string]any, bool) {
 	for _, e := range anySlice(mapGetObj(doc, "config", "providerConfigRules")["providerRules"]) {
 		if m, ok := e.(map[string]any); ok && stringOf(m["providerId"]) == providerID {
-			return m
+			return m, true
 		}
 	}
-	t.Fatalf("providerRules 中不存在 %s", providerID)
-	return nil
+	return nil, false
 }
 
 // fixtureRule 取 providerModelRules 中指定 (providerId, modelId) 的规则节点。
@@ -999,5 +1031,527 @@ func TestZCode_ApplyModels_manual冲突守护(t *testing.T) {
 	}
 	if n := mapGetObj(node, "config", "properties")["contextWindow"]; n != json.Number("1000") {
 		t.Errorf("manual 节点兄弟键 contextWindow 应原样保留,实际 %v", n)
+	}
+}
+
+// TestZCode_RemoveModels_清单与规则清理 验证:双清单(modelOrder 与
+// personalModelIds)移除、providerModelRules 命中节点清理、供应商节点保留
+// (apiKey/templateId 零丢失)、未知键与数字精度保留、写回产生备份、返回最新清单。
+func TestZCode_RemoveModels_清单与规则清理(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	// deepseek-chat 在 modelOrder 且带规则节点,my-custom-model 仅在
+	// personalModelIds:两个 ref 一并删除,覆盖双清单移除
+	latest, err := NewZCodeAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{
+			{ProviderID: "deepseek", ModelID: "deepseek-chat"},
+			{ProviderID: "deepseek", ModelID: "my-custom-model"},
+		}, dataDir)
+	if err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	// 返回的最新清单:两个定位均消失,deepseek-reasoner 保留
+	if _, ok := entryFieldsOfOK(latest, "deepseek", "deepseek-chat"); ok {
+		t.Error("deepseek-chat 应已从清单移除")
+	}
+	if _, ok := entryFieldsOfOK(latest, "deepseek", "my-custom-model"); ok {
+		t.Error("my-custom-model 应已从清单移除")
+	}
+	if _, ok := entryFieldsOfOK(latest, "deepseek", "deepseek-reasoner"); !ok {
+		t.Error("deepseek-reasoner 应保留在清单中")
+	}
+
+	doc := readFixtureTree(t, home)
+	// 双清单移除:modelOrder 与 personalModelIds 均不再含命中 id
+	cfg := mapGetObj(doc, "config")
+	dsCfg := mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")
+	if ids := stringSliceOf(dsCfg["modelOrder"]); len(ids) != 1 || ids[0] != "deepseek-reasoner" {
+		t.Errorf("modelOrder 应为 [deepseek-reasoner],实际 %v", ids)
+	}
+	if ids := stringSliceOf(dsCfg["personalModelIds"]); len(ids) != 1 || ids[0] != "deepseek-reasoner" {
+		t.Errorf("personalModelIds 应为 [deepseek-reasoner],实际 %v", ids)
+	}
+	// 规则节点已清理
+	if _, ok := fixtureRuleOK(doc, "deepseek", "deepseek-chat"); ok {
+		t.Error("providerModelRules 中 deepseek-chat 规则节点应被删除")
+	}
+	// manualProviderModelRules 不动
+	if manual := anySlice(mapGetObj(doc, "config", "modelConfigRules")["manualProviderModelRules"]); len(manual) != 0 {
+		t.Errorf("manualProviderModelRules 应原样保留为空数组,实际 %v", manual)
+	}
+	// 供应商节点不删:providerOrder/providerRules 保持,apiKey 与 templateId 零丢失
+	if order := stringSliceOf(cfg["providerOrder"]); len(order) != 2 || order[0] != "deepseek" {
+		t.Errorf("providerOrder 应原样保留,实际 %v", order)
+	}
+	dsRule := fixtureProviderRule(t, doc, "deepseek")
+	if key := stringOf(mapGetObj(dsRule, "config", "access")["apiKey"]); key != fixtureKey {
+		t.Errorf("apiKey 必须原样保留,实际 %q", key)
+	}
+	if s := stringOf(dsRule["templateId"]); s != "deepseek" {
+		t.Errorf("templateId 应原样保留,实际 %q", s)
+	}
+	// 未知键与数字精度零丢失:规则内 contextWindow 等数字以 json.Number 原样重编码
+	if keep, ok := boolOf(mapGetObj(cfg, "unknownTopKey")["keep"]); !ok || !keep {
+		t.Errorf("未知键 unknownTopKey 应原样保留,实际 %v", mapGetObj(cfg, "unknownTopKey")["keep"])
+	}
+	// 写回产生 1 份备份
+	if got := backupCount(t, dataDir, "zcode"); got != 1 {
+		t.Errorf("删除写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestZCode_RemoveModels_manual规则不动 目标模型只有 manualProviderModelRules
+// 节点时,删除只清理双清单,manual 数组逐条原样保留。
+func TestZCode_RemoveModels_manual规则不动(t *testing.T) {
+	home := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfigManual)
+
+	_, err := NewZCodeAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{{ProviderID: "deepseek", ModelID: "deepseek-chat"}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	doc := readFixtureTree(t, home)
+	mcr := mapGetObj(doc, "config", "modelConfigRules")
+	if rules := anySlice(mcr["providerModelRules"]); len(rules) != 0 {
+		t.Errorf("providerModelRules 应保持为空数组,实际 %v", rules)
+	}
+	manual := anySlice(mcr["manualProviderModelRules"])
+	if len(manual) != 1 {
+		t.Fatalf("manualProviderModelRules 不得增删条目,实际 %d 个", len(manual))
+	}
+	node, _ := manual[0].(map[string]any)
+	if n := mapGetObj(node, "config", "properties")["contextWindow"]; n != json.Number("1000") {
+		t.Errorf("manual 节点内容应原样保留,实际 %v", mapGetObj(node, "config", "properties")["contextWindow"])
+	}
+	// 供应商节点保留,清单变空
+	if ids := stringSliceOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")["modelOrder"]); len(ids) != 0 {
+		t.Errorf("modelOrder 应已清空,实际 %v", ids)
+	}
+	if order := stringSliceOf(mapGetObj(doc, "config")["providerOrder"]); len(order) != 1 {
+		t.Errorf("供应商节点不得删除,providerOrder 实际 %v", order)
+	}
+}
+
+// TestZCode_RemoveModels_定位不存在_4404整批拒绝 任一定位不存在时报 4404,
+// 整批不生效(不备份、不落盘)。
+func TestZCode_RemoveModels_定位不存在_4404整批拒绝(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	cases := []struct {
+		name string
+		refs []agentconf.ModelRef
+	}{
+		{"模型不存在", []agentconf.ModelRef{{ProviderID: "deepseek", ModelID: "no-such-model"}}},
+		{"供应商不存在", []agentconf.ModelRef{{ProviderID: "no-such-provider", ModelID: "deepseek-chat"}}},
+		{"混合批次含无效定位", []agentconf.ModelRef{
+			{ProviderID: "deepseek", ModelID: "deepseek-chat"},
+			{ProviderID: "deepseek", ModelID: "no-such-model"},
+		}},
+		{"空定位", []agentconf.ModelRef{{}}},
+	}
+	for _, tc := range cases {
+		_, err := NewZCodeAgent(home).RemoveModels(context.Background(), tc.refs, dataDir)
+		if !isAgentNotFound(err) {
+			t.Errorf("%s: 期望 4404,实际 %v", tc.name, err)
+		}
+	}
+	// 整批拒绝:文件不被改写,也不产生备份
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+	entries, err := NewZCodeAgent(home).Models(context.Background())
+	if err != nil {
+		t.Fatalf("重读清单失败: %v", err)
+	}
+	if _, ok := entryFieldsOfOK(entries, "deepseek", "deepseek-chat"); !ok {
+		t.Error("校验失败后文件不得被改写,deepseek-chat 应仍在清单中")
+	}
+}
+
+// TestZCode_RemoveModels_空refs_不落盘 空 refs 只读返回现状,不备份不写盘。
+func TestZCode_RemoveModels_空refs_不落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	entries, err := NewZCodeAgent(home).RemoveModels(context.Background(), []agentconf.ModelRef{}, dataDir)
+	if err != nil {
+		t.Fatalf("空 refs 不应报错: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Errorf("空 refs 应返回现有清单,实际 %d 条", len(entries))
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("空 refs 不应产生备份,实际 %d 份", got)
+	}
+}
+
+// TestZCode_AddModels_挂已有供应商 验证:新 id 按输入顺序追加到
+// personalModelIds、不写凭据、不创建规则节点、已存在逐条 skip、备份产生、
+// 返回最新清单与 added/skipped。
+func TestZCode_AddModels_挂已有供应商(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"new-model-a", "deepseek-chat", "new-model-b"},
+		Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: "deepseek"},
+	}
+	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	// 逐项成败:deepseek-chat 已存在跳过,其余按输入顺序新增
+	if len(result.Added) != 2 || result.Added[0] != "new-model-a" || result.Added[1] != "new-model-b" {
+		t.Errorf("added 应为 [new-model-a new-model-b],实际 %v", result.Added)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != "deepseek-chat" {
+		t.Errorf("skipped 应为 [deepseek-chat],实际 %v", result.Skipped)
+	}
+	// 返回的最新清单包含新模型
+	if _, ok := entryFieldsOfOK(result.Entries, "deepseek", "new-model-a"); !ok {
+		t.Error("最新清单应包含 new-model-a")
+	}
+	// personalModelIds 追加保序:原 [deepseek-reasoner my-custom-model] + 新增
+	doc := readFixtureTree(t, home)
+	ids := stringSliceOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")["personalModelIds"])
+	want := []string{"deepseek-reasoner", "my-custom-model", "new-model-a", "new-model-b"}
+	if len(ids) != len(want) {
+		t.Fatalf("personalModelIds 应为 %v,实际 %v", want, ids)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("personalModelIds[%d] 应为 %s,实际 %s", i, want[i], ids[i])
+		}
+	}
+	// modelOrder 不被触碰
+	if order := stringSliceOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")["modelOrder"]); len(order) != 2 {
+		t.Errorf("modelOrder 不得被触碰,实际 %v", order)
+	}
+	// 不写凭据:apiKey 原样;不创建规则节点
+	dsRule := fixtureProviderRule(t, doc, "deepseek")
+	if key := stringOf(mapGetObj(dsRule, "config", "access")["apiKey"]); key != fixtureKey {
+		t.Errorf("apiKey 必须原样保留,实际 %q", key)
+	}
+	if rules := anySlice(mapGetObj(doc, "config", "modelConfigRules")["providerModelRules"]); len(rules) != 1 {
+		t.Errorf("不得创建规则节点,实际 %d 个", len(rules))
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 1 {
+		t.Errorf("挂靠写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestZCode_AddModels_挂靠_目标供应商不存在_4404 供应商不存在时报 4404 且零落盘。
+func TestZCode_AddModels_挂靠_目标供应商不存在_4404(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m-1"},
+		Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: "no-such-provider"},
+	}
+	if _, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir); !isAgentNotFound(err) {
+		t.Errorf("期望 4404,实际 %v", err)
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+}
+
+// TestZCode_AddModels_挂靠_全skip_零落盘 全部已存在时不备份不落盘。
+func TestZCode_AddModels_挂靠_全skip_零落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"deepseek-chat", "my-custom-model"},
+		Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: "deepseek"},
+	}
+	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("全 skip 不应报错: %v", err)
+	}
+	if len(result.Added) != 0 || len(result.Skipped) != 2 {
+		t.Errorf("added/skipped 应为 0/2,实际 %v / %v", result.Added, result.Skipped)
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("全 skip 不应产生备份,实际 %d 份", got)
+	}
+}
+
+// newProviderFixture 构造 providerRules 已占用 new-provider 系列序号的夹具,
+// 供 providerId 生成断言使用。
+const newProviderSeqFixture = `{
+  "schemaVersion": 1,
+  "config": {
+    "providerOrder": ["deepseek", "new-provider", "new-provider-2"],
+    "providerConfigRules": {
+      "providerRules": [
+        {
+          "providerId": "deepseek",
+          "providerName": "DeepSeek",
+          "enabled": true,
+          "config": {
+            "access": {"type": "api-key", "apiKey": "sk-fixture-never-leak"},
+            "api": {"type": "openai-chat-completions", "baseUrl": "https://api.example.com/v1"},
+            "modelOrder": ["deepseek-chat"]
+          }
+        },
+        {"providerId": "new-provider", "providerName": "占用一"},
+        {"providerId": "new-provider-2", "providerName": "占用二"}
+      ]
+    },
+    "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []}
+  }
+}`
+
+// TestZCode_AddModels_新建供应商 验证:providerId 取最小未用序号、节点恰为
+// 设计所列键集(无 templateId 等未知键)、api.type 空缺省 chat-completions、
+// providerOrder 追加、新模型挂入 personalModelIds、apiKey 写入 Source 值、
+// 既有供应商零接触。
+func TestZCode_AddModels_新建供应商(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m-new-1", "deepseek-chat", "m-new-2"},
+		Source: agentconf.ModelSource{
+			ProviderName: "来源接口",
+			BaseURL:      "https://source.example.com/v1",
+			APIKey:       "sk-source-credential",
+		},
+		Target: agentconf.AddTargetSpec{Mode: "new", ProviderName: "我的新供应商"},
+	}
+	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	// deepseek-chat 已在 deepseek 清单中,全量判重跳过
+	if len(result.Added) != 2 || result.Added[0] != "m-new-1" || result.Added[1] != "m-new-2" {
+		t.Errorf("added 应为 [m-new-1 m-new-2],实际 %v", result.Added)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != "deepseek-chat" {
+		t.Errorf("skipped 应为 [deepseek-chat],实际 %v", result.Skipped)
+	}
+
+	doc := readFixtureTree(t, home)
+	// providerId 取最小未用序号:夹具已有 new-provider-7,应为 new-provider
+	node := fixtureProviderRule(t, doc, "new-provider")
+	// 节点形状逐键断言:恰为 {providerId, providerName, enabled, config}
+	if len(node) != 4 {
+		t.Errorf("新建节点应恰含 4 个顶层键,实际 %d 个:%v", len(node), node)
+	}
+	for _, k := range []string{"providerId", "providerName", "enabled", "config"} {
+		if _, ok := node[k]; !ok {
+			t.Errorf("新建节点缺少键 %s,实际 %v", k, node)
+		}
+	}
+	if _, ok := node["templateId"]; ok {
+		t.Error("新建节点绝不可写 templateId(strict 校验防拒载)")
+	}
+	if node["enabled"] != true {
+		t.Errorf("新建节点 enabled 应为 true,实际 %v", node["enabled"])
+	}
+	if name := stringOf(node["providerName"]); name != "我的新供应商" {
+		t.Errorf("providerName 应取 Target.ProviderName,实际 %q", name)
+	}
+	// config 节点:恰为 {group, access, api, modelOrder, personalModelIds}
+	cfg := mapGetObj(node, "config")
+	if len(cfg) != 5 {
+		t.Errorf("config 应恰含 5 个键,实际 %d 个:%v", len(cfg), cfg)
+	}
+	for _, k := range []string{"group", "access", "api", "modelOrder", "personalModelIds"} {
+		if _, ok := cfg[k]; !ok {
+			t.Errorf("config 缺少键 %s,实际 %v", k, cfg)
+		}
+	}
+	if cfg["group"] != "standard-personal" {
+		t.Errorf("group 应为 standard-personal,实际 %v", cfg["group"])
+	}
+	if key := stringOf(mapGetObj(cfg, "access")["apiKey"]); key != "sk-source-credential" {
+		t.Errorf("access.apiKey 应写入来源接口凭据,实际 %q", key)
+	}
+	if t2 := stringOf(mapGetObj(cfg, "access")["type"]); t2 != "api-key" {
+		t.Errorf("access.type 应为 api-key,实际 %q", t2)
+	}
+	// api.type 空缺省 openai-chat-completions,baseUrl 取 Source.BaseURL
+	if at := stringOf(mapGetObj(cfg, "api")["type"]); at != "openai-chat-completions" {
+		t.Errorf("api.type 空时应缺省 openai-chat-completions,实际 %q", at)
+	}
+	if bu := stringOf(mapGetObj(cfg, "api")["baseUrl"]); bu != "https://source.example.com/v1" {
+		t.Errorf("api.baseUrl 应取 Source.BaseURL,实际 %q", bu)
+	}
+	// modelOrder 为空数组,personalModelIds 为新增 id 按输入顺序
+	if mo := anySlice(cfg["modelOrder"]); len(mo) != 0 {
+		t.Errorf("modelOrder 应为空数组,实际 %v", mo)
+	}
+	if ids := stringSliceOf(cfg["personalModelIds"]); len(ids) != 2 || ids[0] != "m-new-1" || ids[1] != "m-new-2" {
+		t.Errorf("personalModelIds 应为 [m-new-1 m-new-2],实际 %v", ids)
+	}
+	// 追加进 providerOrder 尾部,既有供应商零接触
+	order := stringSliceOf(mapGetObj(doc, "config")["providerOrder"])
+	if len(order) != 3 || order[0] != "deepseek" || order[1] != "new-provider-7" || order[2] != "new-provider" {
+		t.Errorf("providerOrder 应为 [deepseek new-provider-7 new-provider],实际 %v", order)
+	}
+	if key := stringOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config", "access")["apiKey"]); key != fixtureKey {
+		t.Errorf("既有供应商 apiKey 必须零接触,实际 %q", key)
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 1 {
+		t.Errorf("新建供应商写回应产生 1 份备份,实际 %d", got)
+	}
+	// 返回的最新清单包含新供应商下的新模型
+	if _, ok := entryFieldsOfOK(result.Entries, "new-provider", "m-new-1"); !ok {
+		t.Error("最新清单应包含 new-provider / m-new-1")
+	}
+}
+
+// TestZCode_AddModels_新建供应商_序号递增 new-provider 与 new-provider-2 均被
+// 占用时取 new-provider-3(最小未用序号)。
+func TestZCode_AddModels_新建供应商_序号递增(t *testing.T) {
+	home := t.TempDir()
+	writeZCodeFixture(t, home, newProviderSeqFixture)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m-1"},
+		Source:   agentconf.ModelSource{BaseURL: "https://s.example.com", APIKey: "sk-x"},
+		Target:   agentconf.AddTargetSpec{Mode: "new"},
+	}
+	if _, err := NewZCodeAgent(home).AddModels(context.Background(), req, t.TempDir()); err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	doc := readFixtureTree(t, home)
+	// providerName 两级回退均为空时兜底为 providerId
+	node := fixtureProviderRule(t, doc, "new-provider-3")
+	if node == nil {
+		t.Fatal("应生成 providerId=new-provider-3")
+	}
+	if name := stringOf(node["providerName"]); name != "new-provider-3" {
+		t.Errorf("显示名两级回退为空时应兜底为 providerId,实际 %q", name)
+	}
+}
+
+// TestZCode_AddModels_新建供应商_apiType非法_4403 api_type 非法时报 4403 且零落盘。
+func TestZCode_AddModels_新建供应商_apiType非法_4403(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m-1"},
+		Source:   agentconf.ModelSource{BaseURL: "https://s.example.com", APIKey: "sk-x"},
+		Target:   agentconf.AddTargetSpec{Mode: "new", APIType: "anthropic-messages"},
+	}
+	_, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
+	if !isAgentInvalid(err) {
+		t.Errorf("期望 4403,实际 %v", err)
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+	// 合法取值 openai-responses 放行
+	req.Target.APIType = "openai-responses"
+	if _, err := NewZCodeAgent(home).AddModels(context.Background(), req, t.TempDir()); err != nil {
+		t.Fatalf("合法 api_type 不应报错: %v", err)
+	}
+	cfg := mapGetObj(fixtureProviderRule(t, readFixtureTree(t, home), "new-provider"), "config")
+	if at := stringOf(mapGetObj(cfg, "api")["type"]); at != "openai-responses" {
+		t.Errorf("api.type 应为 openai-responses,实际 %q", at)
+	}
+}
+
+// TestZCode_AddModels_新建供应商_全skip_零落盘 新增 id 已挂在任意供应商时
+// 逐条跳过,全部跳过不备份不落盘。
+func TestZCode_AddModels_新建供应商_全skip_零落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"deepseek-chat", "my-custom-model"},
+		Source:   agentconf.ModelSource{BaseURL: "https://s.example.com", APIKey: "sk-x"},
+		Target:   agentconf.AddTargetSpec{Mode: "new"},
+	}
+	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("全 skip 不应报错: %v", err)
+	}
+	if len(result.Added) != 0 || len(result.Skipped) != 2 {
+		t.Errorf("added/skipped 应为 0/2,实际 %v / %v", result.Added, result.Skipped)
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("全 skip 不应产生备份,实际 %d 份", got)
+	}
+	if _, exists := fixtureProviderRuleOK(readFixtureTree(t, home), "new-provider"); exists {
+		t.Error("全 skip 时不得新建供应商节点")
+	}
+}
+
+// TestZCode_AddModels_参数非法_4403 model_ids 为空与 target.mode 非法均报 4403。
+func TestZCode_AddModels_参数非法_4403(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+	agent := NewZCodeAgent(home)
+
+	cases := []struct {
+		name string
+		req  agentconf.AddModelsRequest
+	}{
+		{"model_ids 为空", agentconf.AddModelsRequest{Target: agentconf.AddTargetSpec{Mode: "existing", ProviderID: "deepseek"}}},
+		{"mode 非法", agentconf.AddModelsRequest{ModelIDs: []string{"m-1"}, Target: agentconf.AddTargetSpec{Mode: "clone"}}},
+	}
+	for _, tc := range cases {
+		if _, err := agent.AddModels(context.Background(), tc.req, dataDir); !isAgentInvalid(err) {
+			t.Errorf("%s: 期望 4403,实际 %v", tc.name, err)
+		}
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+}
+
+// TestZCode_Snapshot_增删能力位与AddTargets 验证:增删能力位恒置 true(含
+// 文件缺失);found 时 AddTargets 携带全部供应商(id+显示名),not_found 时不携带。
+func TestZCode_Snapshot_增删能力位与AddTargets(t *testing.T) {
+	home := t.TempDir()
+	writeZCodeFixture(t, home, testProviderConfig)
+	snap := NewZCodeAgent(home).Snapshot(context.Background())
+	if !snap.SupportsAddModels || !snap.SupportsRemoveModels {
+		t.Error("ZCode 增删能力位应恒为 true")
+	}
+	if len(snap.AddTargets) != 2 {
+		t.Fatalf("found 时应携带 2 个可挂靠供应商,实际 %+v", snap.AddTargets)
+	}
+	if snap.AddTargets[0].ProviderID != "deepseek" || snap.AddTargets[0].ProviderName != "DeepSeek" {
+		t.Errorf("AddTargets[0] 解析错误,实际 %+v", snap.AddTargets[0])
+	}
+	if snap.AddTargets[1].ProviderID != "new-provider-7" || snap.AddTargets[1].ProviderName != "新供应商" {
+		t.Errorf("AddTargets[1] 缺名应回退 id,实际 %+v", snap.AddTargets[1])
+	}
+	// 快照不得包含凭据内容
+	snapJSON, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("快照序列化失败: %v", err)
+	}
+	if strings.Contains(string(snapJSON), fixtureKey) {
+		t.Error("快照不得包含凭据内容")
+	}
+
+	// 文件缺失:能力位仍为 true,AddTargets 为空
+	snap2 := NewZCodeAgent(t.TempDir()).Snapshot(context.Background())
+	if !snap2.SupportsAddModels || !snap2.SupportsRemoveModels {
+		t.Error("文件缺失时增删能力位同样应为 true")
+	}
+	if snap2.AddTargets != nil {
+		t.Errorf("not_found 时不应携带 AddTargets,实际 %+v", snap2.AddTargets)
 	}
 }

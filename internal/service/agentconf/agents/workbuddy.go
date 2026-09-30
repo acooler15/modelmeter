@@ -18,9 +18,18 @@
 // 个匹配定位数组元素,reasoning 节点缺失时创建;id、vendor、apiKey、tags
 // 及未知键逐条原样保留。顶层形态写回保持不变——对象形态只原地回填 models
 // 数组,availableModels 等顶层键零丢失(WorkBuddy 自己会把对象重写回裸数组,
-// 本适配器更保守)。模型条目的新增/删除与 apiKey 管理一律引导用户到
-// WorkBuddy 原生工具操作。整体重编码时 map 键按字母序重排,JSON 语义零变化
-// (沿用既有取舍)。WorkBuddy 无"默认模型"概念:能力位恒 false,不实现
+// 本适配器更保守)。
+//
+// 模型删除(RemoveModels)与添加(AddModels):删除按定位过滤数组元素(非
+// 对象元素原样保留),对象形态同步移除顶层 availableModels 中命中的 id;添加
+// 按来源接口追加条目(恰含 id/name/vendor/url/apiKey 五键,url 为完整 endpoint,
+// 由 handler 从 Base URL 派生),apiKey 来自 ModelMeter 数据库装配的 Source,
+// 属"新增写入凭据"的显式例外(经用户界面确认),既有条目的凭据仍零接触;
+// 对象形态下 availableModels 为数组且不含该 id 时追加,缺失不创建。日志只记
+// 数量与定位键,绝不记 url/key 值。
+//
+// 整体重编码时 map 键按字母序重排,JSON 语义零变化(沿用既有取舍)。
+// WorkBuddy 无"默认模型"概念:能力位恒 false,不实现
 // DefaultModelSetter(handler 对其默认模型请求报 4405)。
 package agents
 
@@ -58,7 +67,7 @@ func (w *WorkBuddyAgent) modelsPath() string {
 }
 
 // wbManageHint 管理边界提示,卡片说明共用。
-const wbManageHint = "API Key 与模型条目的增删请在 WorkBuddy 原生工具中管理,本页仅调整模型配置;修改后建议重启 WorkBuddy 使配置生效"
+const wbManageHint = "既有条目的 API Key 请在 WorkBuddy 原生工具中管理,本页支持模型清单的增删与配置调整;修改后建议重启 WorkBuddy 使配置生效"
 
 // 白名单字段键:Fields 与 patch 中允许出现的键。
 const (
@@ -88,26 +97,32 @@ const (
 
 // Snapshot 实现 Agent 接口:配置文件存在即 found;default_effort 下拉选项取
 // 全部条目 supportedEfforts 的并集(保序去重),无选项时降级为文本输入。
+// 增删模型能力位恒置 true(能力是工具属性,文件缺失时同样成立);WorkBuddy
+// 无"默认模型"概念,该能力位恒 false(零值)。
 func (w *WorkBuddyAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	path := w.modelsPath()
 	if !agentconf.FileExists(path) {
 		return agentconf.Snapshot{
-			Name:        w.Name(),
-			DisplayName: w.DisplayName(),
-			Status:      agentconf.StatusNotFound,
-			ConfigPath:  path,
-			Columns:     workBuddyColumns(nil),
+			Name:                 w.Name(),
+			DisplayName:          w.DisplayName(),
+			Status:               agentconf.StatusNotFound,
+			ConfigPath:           path,
+			Columns:              workBuddyColumns(nil),
+			SupportsAddModels:    true,
+			SupportsRemoveModels: true,
 			Message: "未找到 WorkBuddy 配置文件(~/.workbuddy/models.json)," +
 				"请确认 WorkBuddy 已安装并至少运行过一次",
 		}
 	}
 	return agentconf.Snapshot{
-		Name:        w.Name(),
-		DisplayName: w.DisplayName(),
-		Status:      agentconf.StatusFound,
-		ConfigPath:  path,
-		Columns:     workBuddyColumns(w.collectEfforts()),
-		Message:     wbManageHint,
+		Name:                 w.Name(),
+		DisplayName:          w.DisplayName(),
+		Status:               agentconf.StatusFound,
+		ConfigPath:           path,
+		Columns:              workBuddyColumns(w.collectEfforts()),
+		SupportsAddModels:    true,
+		SupportsRemoveModels: true,
+		Message:              wbManageHint,
 	}
 }
 
@@ -222,6 +237,141 @@ func (w *WorkBuddyAgent) ApplyModels(ctx context.Context, patches []agentconf.Mo
 	}
 	slog.Info("WorkBuddy 模型配置已更新", "patches", len(patches), "fields", patchChangedKeys(patches))
 	return w.Models(ctx)
+}
+
+// RemoveModels 实现 Agent 接口:先整体校验全部定位(按 modelId 首个匹配口径,
+// 任一不存在报 4404,整批拒绝避免半批生效),再一次备份、过滤数组、原子写回,
+// 返回最新清单。空 refs 视为只读:不备份、不落盘,直接返回现状。对象形态同步
+// 移除顶层 availableModels 中命中的 id(该键缺失或不是数组则不触碰)。
+func (w *WorkBuddyAgent) RemoveModels(ctx context.Context, refs []agentconf.ModelRef, dataDir string) ([]agentconf.ModelEntry, error) {
+	root, err := w.readDoc()
+	if err != nil {
+		return nil, err
+	}
+	models, err := workBuddyModelsOf(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		// 空删除视为只读:不备份、不落盘,直接返回现状
+		return workBuddyEntries(models), nil
+	}
+	for _, ref := range refs {
+		if locateWorkBuddy(models, ref.ModelID) == nil {
+			return nil, apperr.New(apperr.CodeAgentNotFound, "模型不存在:"+ref.ModelID)
+		}
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(w.modelsPath(), w.Name(), dataDir); err != nil {
+		return nil, apperr.Wrap(apperr.CodeAgentFileIO, "备份 WorkBuddy 配置失败", err)
+	}
+	for _, ref := range refs {
+		models = removeWorkBuddyEntry(models, ref.ModelID)
+	}
+	// 过滤会产生新切片:裸数组形态直接把过滤结果作为根值;对象形态回填
+	// models 键,并按 id 同步 availableModels(存在则移除命中项,缺失或不是
+	// 数组则不创建不触碰)
+	if obj, ok := root.(map[string]any); ok {
+		obj[wbFileModels] = models
+		if arr, ok := obj["availableModels"].([]any); ok {
+			for _, ref := range refs {
+				arr = removeStringValues(arr, ref.ModelID)
+			}
+			obj["availableModels"] = arr
+		}
+	} else {
+		root = models
+	}
+	if err := agentconf.WriteJSONFile(w.modelsPath(), root); err != nil {
+		return nil, apperr.Wrap(apperr.CodeAgentFileIO, "写回 WorkBuddy 配置失败", err)
+	}
+	// 日志只记删除数量与定位键,不记任何配置值
+	slog.Info("WorkBuddy 模型已删除", "count", len(refs), "targets", refKeys(refs))
+	return w.Models(ctx)
+}
+
+// removeWorkBuddyEntry 过滤模型数组:移除对象元素中 id 等于 modelID 的条目,
+// 非对象元素原样保留。
+func removeWorkBuddyEntry(arr []any, modelID string) []any {
+	out := make([]any, 0, len(arr))
+	for _, e := range arr {
+		if m, ok := e.(map[string]any); ok && stringOf(m["id"]) == modelID {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// AddModels 实现 Agent 接口:按来源接口逐条追加模型,数组内已有同 id 条目的
+// 逐条跳过,全部跳过时不备份不落盘。新条目恰含 id/name/vendor/url/apiKey 五键
+// (url 为完整 endpoint 语义,由 handler 从 Base URL 派生;apiKey 来自 ModelMeter
+// 数据库装配的 Source,属"新增写入凭据"的显式例外),其余字段交给 WorkBuddy
+// 缺省语义与用户后续编辑。对象形态下顶层 availableModels 为数组且不含该 id 时
+// 追加(缺失不创建);裸数组形态无该概念,自然跳过。日志只记数量,不记 url/key 值。
+func (w *WorkBuddyAgent) AddModels(ctx context.Context, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
+	root, err := w.readDoc()
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	models, err := workBuddyModelsOf(root)
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	if len(req.ModelIDs) == 0 {
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid, "model_ids 不能为空")
+	}
+	// 逐 id 判重:数组内已有同 id 条目的跳过;新增 id 顺带登记,处理请求内重复
+	existing := make(map[string]bool, len(models))
+	for _, e := range models {
+		if m, ok := e.(map[string]any); ok {
+			if id := stringOf(m["id"]); id != "" {
+				existing[id] = true
+			}
+		}
+	}
+	added, skipped := splitAddIDs(req.ModelIDs, existing)
+	if len(added) == 0 {
+		// 全部已存在:零落盘直接返回,不产生备份
+		return agentconf.AddModelsResult{Entries: workBuddyEntries(models), Added: added, Skipped: skipped}, nil
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(w.modelsPath(), w.Name(), dataDir); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "备份 WorkBuddy 配置失败", err)
+	}
+	for _, id := range added {
+		models = append(models, newFlatModelEntry(id, req.Source))
+	}
+	// 追加可能产生新切片:裸数组形态直接把追加结果作为根值;对象形态回填
+	// models 键并按 id 同步 availableModels(存在且不含该 id 时追加,缺失不创建)
+	if obj, ok := root.(map[string]any); ok {
+		obj[wbFileModels] = models
+		if arr, ok := obj["availableModels"].([]any); ok {
+			for _, id := range added {
+				if !stringArrayContains(arr, id) {
+					arr = append(arr, id)
+				}
+			}
+			obj["availableModels"] = arr
+		}
+	} else {
+		root = models
+	}
+	if err := agentconf.WriteJSONFile(w.modelsPath(), root); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "写回 WorkBuddy 配置失败", err)
+	}
+	slog.Info("WorkBuddy 模型已添加", "count", len(added), "skipped", len(skipped))
+	return w.addResult(ctx, added, skipped)
+}
+
+// addResult 重新读取最新清单并组装添加结果;写回已成功,重读失败按原样返回
+// (与 ApplyModels 返回最新清单的口径一致)。
+func (w *WorkBuddyAgent) addResult(ctx context.Context, added, skipped []string) (agentconf.AddModelsResult, error) {
+	entries, err := w.Models(ctx)
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	return agentconf.AddModelsResult{Entries: entries, Added: added, Skipped: skipped}, nil
 }
 
 // readDoc 读取配置文件并用 json.Decoder+UseNumber 解析为根值(裸数组或

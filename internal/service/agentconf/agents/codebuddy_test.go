@@ -646,3 +646,255 @@ func TestCodeBuddy_能力一致性(t *testing.T) {
 		t.Error("CodeBuddy 不应实现 DefaultModelSetter 接口")
 	}
 }
+
+// TestCodeBuddy_RemoveModels_对象形态 对象形态删除:命中条目移除(非对象元素
+// 保留)、顶层 availableModels 同步移除命中的 id、既有 apiKey 零接触、备份产生。
+func TestCodeBuddy_RemoveModels_对象形态(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, `{
+		"version": 1,
+		"availableModels": ["cb-a", "cb-b"],
+		"models": [
+			{"id": "cb-a", "name": "A", "apiKey": "sk-cb-a"},
+			"纯字符串元素",
+			{"id": "cb-b", "name": "B", "apiKey": "sk-cb-b"}
+		]
+	}`)
+
+	latest, err := NewCodeBuddyAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{{ModelID: "cb-a"}}, dataDir)
+	if err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	if len(latest) != 1 || latest[0].ModelID != "cb-b" {
+		t.Errorf("最新清单应只剩 cb-b,实际 %+v", latest)
+	}
+	doc := readCodeBuddyDoc(t, home)
+	if ids := stringSliceOf(doc["availableModels"]); len(ids) != 1 || ids[0] != "cb-b" {
+		t.Errorf("availableModels 应同步移除 cb-a,实际 %v", ids)
+	}
+	if v, ok := doc["version"].(json.Number); !ok || v.String() != "1" {
+		t.Errorf("未知顶层键 version 应原样保留,实际 %v(%T)", doc["version"], doc["version"])
+	}
+	arr := anySlice(doc["models"])
+	if len(arr) != 2 {
+		t.Fatalf("数组应剩 2 个元素,实际 %d 个:%v", len(arr), arr)
+	}
+	if s, ok := arr[0].(string); !ok || s != "纯字符串元素" {
+		t.Errorf("非对象元素应原样保留,实际 %v(%T)", arr[0], arr[0])
+	}
+	if key := stringOf(cbFixtureElement(t, arr, 1)["apiKey"]); key != "sk-cb-b" {
+		t.Errorf("既有条目 apiKey 必须零接触,实际 %q", key)
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 1 {
+		t.Errorf("删除写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestCodeBuddy_RemoveModels_availableModels缺失_不触碰 availableModels 键缺失
+// 时删除不创建该键。
+func TestCodeBuddy_RemoveModels_availableModels缺失_不触碰(t *testing.T) {
+	home := t.TempDir()
+	writeCodeBuddyFixture(t, home, `{"models": [{"id": "only", "name": "唯一"}]}`)
+
+	if _, err := NewCodeBuddyAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{{ModelID: "only"}}, t.TempDir()); err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	doc := readCodeBuddyDoc(t, home)
+	if _, exists := doc["availableModels"]; exists {
+		t.Error("availableModels 缺失时不得凭空创建")
+	}
+	if arr := anySlice(doc["models"]); len(arr) != 0 {
+		t.Errorf("models 应已清空,实际 %v", arr)
+	}
+}
+
+// TestCodeBuddy_RemoveModels_定位不存在_4404整批拒绝 任一定位不存在时报 4404,
+// 整批不生效(不备份、不落盘)。
+func TestCodeBuddy_RemoveModels_定位不存在_4404整批拒绝(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, testCodeBuddyJSON)
+
+	refs := []agentconf.ModelRef{
+		{ModelID: "deepseek-v4-pro"},
+		{ModelID: "no-such-model"},
+	}
+	if _, err := NewCodeBuddyAgent(home).RemoveModels(context.Background(), refs, dataDir); !isAgentNotFound(err) {
+		t.Errorf("期望 4404,实际 %v", err)
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+	if arr := cbFixtureModels(t, home); len(arr) != 3 {
+		t.Errorf("校验失败后文件不得被改写,实际 %d 条", len(arr))
+	}
+}
+
+// TestCodeBuddy_RemoveModels_空refs_不落盘 空 refs 只读返回现状,不备份不写盘。
+func TestCodeBuddy_RemoveModels_空refs_不落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, testCodeBuddyJSON)
+
+	entries, err := NewCodeBuddyAgent(home).RemoveModels(context.Background(), []agentconf.ModelRef{}, dataDir)
+	if err != nil {
+		t.Fatalf("空 refs 不应报错: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("空 refs 应返回现有清单,实际 %d 条", len(entries))
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 0 {
+		t.Errorf("空 refs 不应产生备份,实际 %d 份", got)
+	}
+}
+
+// TestCodeBuddy_AddModels_对象形态 新条目恰含 5 键(url 为完整 endpoint)、
+// availableModels 为数组且不含该 id 时追加、既有条目 apiKey 零接触、备份产生。
+func TestCodeBuddy_AddModels_对象形态(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, testCodeBuddyJSON)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"new-model", "deepseek-v4-pro"},
+		Source: agentconf.ModelSource{
+			ProviderName: "来源接口",
+			EndpointURL:  "https://api.example.com/v1/chat/completions",
+			APIKey:       "sk-source-credential",
+		},
+	}
+	result, err := NewCodeBuddyAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	if len(result.Added) != 1 || result.Added[0] != "new-model" {
+		t.Errorf("added 应为 [new-model],实际 %v", result.Added)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != "deepseek-v4-pro" {
+		t.Errorf("skipped 应为 [deepseek-v4-pro],实际 %v", result.Skipped)
+	}
+	if _, ok := entryOfOK(result.Entries, "new-model"); !ok {
+		t.Error("最新清单应包含 new-model")
+	}
+	arr := cbFixtureModels(t, home)
+	if len(arr) != 4 {
+		t.Fatalf("数组应追加到尾部共 4 条,实际 %d 条", len(arr))
+	}
+	m := cbFixtureElement(t, arr, 3)
+	if len(m) != 5 {
+		t.Errorf("新条目应恰含 5 个键,实际 %d 个:%v", len(m), m)
+	}
+	for _, k := range []string{"id", "name", "vendor", "url", "apiKey"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("新条目缺少键 %s,实际 %v", k, m)
+		}
+	}
+	if stringOf(m["url"]) != "https://api.example.com/v1/chat/completions" {
+		t.Errorf("url 应为完整 endpoint,实际 %v", m["url"])
+	}
+	if stringOf(m["apiKey"]) != "sk-source-credential" {
+		t.Errorf("apiKey 应写入来源接口凭据,实际 %q", stringOf(m["apiKey"]))
+	}
+	if ids := stringSliceOf(readCodeBuddyDoc(t, home)["availableModels"]); len(ids) != 2 || ids[1] != "new-model" {
+		t.Errorf("availableModels 应追加为 [deepseek-v4-pro new-model],实际 %v", ids)
+	}
+	if key := stringOf(cbFixtureElement(t, arr, 0)["apiKey"]); key != cbFixtureKey {
+		t.Errorf("既有条目 apiKey 必须零接触,实际 %q", key)
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 1 {
+		t.Errorf("添加写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestCodeBuddy_AddModels_availableModels缺失_不创建 availableModels 键缺失时
+// 只追加条目,不创建该键;缺 models 数组的空清单文件可正常添加(models 键创建)。
+func TestCodeBuddy_AddModels_availableModels缺失_不创建(t *testing.T) {
+	home := t.TempDir()
+	writeCodeBuddyFixture(t, home, `{"version": 1}`)
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"m-1"},
+		Source:   agentconf.ModelSource{ProviderName: "来源", EndpointURL: "https://s/v1/chat/completions", APIKey: "sk-x"},
+	}
+	if _, err := NewCodeBuddyAgent(home).AddModels(context.Background(), req, t.TempDir()); err != nil {
+		t.Fatalf("空清单添加不应报错: %v", err)
+	}
+	doc := readCodeBuddyDoc(t, home)
+	if _, exists := doc["availableModels"]; exists {
+		t.Error("availableModels 缺失时不得凭空创建")
+	}
+	arr := anySlice(doc["models"])
+	if len(arr) != 1 || stringOf(cbFixtureElement(t, arr, 0)["id"]) != "m-1" {
+		t.Errorf("models 应有新条目 m-1,实际 %v", arr)
+	}
+	if v, ok := doc["version"].(json.Number); !ok || v.String() != "1" {
+		t.Errorf("未知顶层键 version 应原样保留,实际 %v(%T)", doc["version"], doc["version"])
+	}
+}
+
+// TestCodeBuddy_AddModels_全skip_零落盘 全部已存在时不备份不落盘。
+func TestCodeBuddy_AddModels_全skip_零落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, testCodeBuddyJSON)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+		Source:   agentconf.ModelSource{EndpointURL: "https://s/v1/chat/completions", APIKey: "sk-x"},
+	}
+	result, err := NewCodeBuddyAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("全 skip 不应报错: %v", err)
+	}
+	if len(result.Added) != 0 || len(result.Skipped) != 2 {
+		t.Errorf("added/skipped 应为 0/2,实际 %v / %v", result.Added, result.Skipped)
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 0 {
+		t.Errorf("全 skip 不应产生备份,实际 %d 份", got)
+	}
+	if arr := cbFixtureModels(t, home); len(arr) != 3 {
+		t.Errorf("全 skip 时文件不得被改写,实际 %d 条", len(arr))
+	}
+}
+
+// TestCodeBuddy_AddModels_model_ids空_4403 model_ids 为空报 4403 且零落盘。
+func TestCodeBuddy_AddModels_model_ids空_4403(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeCodeBuddyFixture(t, home, testCodeBuddyJSON)
+
+	_, err := NewCodeBuddyAgent(home).AddModels(context.Background(), agentconf.AddModelsRequest{}, dataDir)
+	if !isAgentInvalid(err) {
+		t.Errorf("期望 4403,实际 %v", err)
+	}
+	if got := backupCount(t, dataDir, "codebuddy"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+}
+
+// TestCodeBuddy_增删_文件缺失_4404 配置文件缺失时增删均报 4404。
+func TestCodeBuddy_增删_文件缺失_4404(t *testing.T) {
+	agent := NewCodeBuddyAgent(t.TempDir())
+	if _, err := agent.RemoveModels(context.Background(), []agentconf.ModelRef{{ModelID: "m"}}, t.TempDir()); !isAgentNotFound(err) {
+		t.Errorf("RemoveModels 期望 4404,实际 %v", err)
+	}
+	if _, err := agent.AddModels(context.Background(), agentconf.AddModelsRequest{ModelIDs: []string{"m"}}, t.TempDir()); !isAgentNotFound(err) {
+		t.Errorf("AddModels 期望 4404,实际 %v", err)
+	}
+}
+
+// TestCodeBuddy_增删_裸数组顶层_4402 维持既有口径:顶层裸数组不能当作
+// CodeBuddy 配置编辑,增删均报 4402。
+func TestCodeBuddy_增删_裸数组顶层_4402(t *testing.T) {
+	home := t.TempDir()
+	writeCodeBuddyFixture(t, home, `[{"id": "m", "name": "裸数组"}]`)
+	agent := NewCodeBuddyAgent(home)
+	if _, err := agent.RemoveModels(context.Background(), []agentconf.ModelRef{{ModelID: "m"}}, t.TempDir()); !isAgentFileIO(err) {
+		t.Errorf("RemoveModels 期望 4402,实际 %v", err)
+	}
+	if _, err := agent.AddModels(context.Background(), agentconf.AddModelsRequest{ModelIDs: []string{"m"}}, t.TempDir()); !isAgentFileIO(err) {
+		t.Errorf("AddModels 期望 4402,实际 %v", err)
+	}
+}

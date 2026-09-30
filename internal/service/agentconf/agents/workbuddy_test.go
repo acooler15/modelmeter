@@ -680,3 +680,303 @@ func TestWorkBuddy_能力一致性(t *testing.T) {
 		t.Error("WorkBuddy 不应实现 DefaultModelSetter 接口")
 	}
 }
+
+// TestWorkBuddy_RemoveModels_裸数组 裸数组形态:命中条目移除、非对象元素
+// 原样保留、既有 apiKey 零接触、写回产生备份、返回最新清单。
+func TestWorkBuddy_RemoveModels_裸数组(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeWorkBuddyFixture(t, home, `[
+		{"id": "m1", "name": "模型一", "apiKey": "sk-keep-1"},
+		"纯字符串元素",
+		{"id": "m2", "name": "模型二", "apiKey": "sk-keep-2"}
+	]`)
+
+	latest, err := NewWorkBuddyAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{{ModelID: "m1"}}, dataDir)
+	if err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	if len(latest) != 1 || latest[0].ModelID != "m2" {
+		t.Errorf("最新清单应只剩 m2,实际 %+v", latest)
+	}
+	arr, ok := readFixtureDoc(t, home).([]any)
+	if !ok {
+		t.Fatal("裸数组形态写回后顶层必须仍是数组")
+	}
+	if len(arr) != 2 {
+		t.Fatalf("数组应剩 2 个元素,实际 %d 个:%v", len(arr), arr)
+	}
+	if s, ok := arr[0].(string); !ok || s != "纯字符串元素" {
+		t.Errorf("非对象元素应原样保留,实际 %v(%T)", arr[0], arr[0])
+	}
+	if key := stringOf(fixtureElement(t, arr, 1)["apiKey"]); key != "sk-keep-2" {
+		t.Errorf("既有条目 apiKey 必须零接触,实际 %q", key)
+	}
+	if got := backupCount(t, dataDir, "workbuddy"); got != 1 {
+		t.Errorf("删除写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestWorkBuddy_RemoveModels_对象形态availableModels同步 对象形态:命中条目
+// 从 models 移除,顶层 availableModels 同步移除命中的 id,其余顶层键零丢失。
+func TestWorkBuddy_RemoveModels_对象形态availableModels同步(t *testing.T) {
+	home := t.TempDir()
+	writeWorkBuddyFixture(t, home, `{
+		"version": 3,
+		"availableModels": ["obj-a", "obj-b", "obj-a"],
+		"models": [
+			{"id": "obj-a", "name": "A", "apiKey": "sk-obj-a"},
+			{"id": "obj-b", "name": "B", "apiKey": "sk-obj-b"}
+		]
+	}`)
+
+	latest, err := NewWorkBuddyAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{{ModelID: "obj-a"}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	if len(latest) != 1 || latest[0].ModelID != "obj-b" {
+		t.Errorf("最新清单应只剩 obj-b,实际 %+v", latest)
+	}
+	obj := readCodeBuddyStyleDoc(t, home)
+	// availableModels 原为 [obj-a obj-b obj-a],命中 id 的全部出现被移除
+	if ids := stringSliceOf(obj["availableModels"]); len(ids) != 1 || ids[0] != "obj-b" {
+		t.Errorf("availableModels 中命中的 id 应全部移除,实际 %v", ids)
+	}
+	if v, ok := obj["version"].(json.Number); !ok || v.String() != "3" {
+		t.Errorf("未知顶层键 version 应原样保留,实际 %v(%T)", obj["version"], obj["version"])
+	}
+	arr := anySlice(obj["models"])
+	if key := stringOf(fixtureElement(t, arr, 0)["apiKey"]); key != "sk-obj-b" {
+		t.Errorf("既有条目 apiKey 必须零接触,实际 %q", key)
+	}
+}
+
+// TestWorkBuddy_RemoveModels_对象形态无availableModels_不触碰 availableModels
+// 键缺失时删除不创建该键。
+func TestWorkBuddy_RemoveModels_对象形态无availableModels_不触碰(t *testing.T) {
+	home := t.TempDir()
+	writeWorkBuddyFixture(t, home, `{"models": [{"id": "only", "name": "唯一"}]}`)
+
+	if _, err := NewWorkBuddyAgent(home).RemoveModels(context.Background(),
+		[]agentconf.ModelRef{{ModelID: "only"}}, t.TempDir()); err != nil {
+		t.Fatalf("RemoveModels 失败: %v", err)
+	}
+	obj := readCodeBuddyStyleDoc(t, home)
+	if _, exists := obj["availableModels"]; exists {
+		t.Error("availableModels 缺失时不得凭空创建")
+	}
+	if arr := anySlice(obj["models"]); len(arr) != 0 {
+		t.Errorf("models 应已清空,实际 %v", arr)
+	}
+}
+
+// TestWorkBuddy_RemoveModels_定位不存在_4404整批拒绝 任一定位不存在时报 4404,
+// 整批不生效(不备份、不落盘)。
+func TestWorkBuddy_RemoveModels_定位不存在_4404整批拒绝(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	refs := []agentconf.ModelRef{
+		{ModelID: "deepseek-v4-flash"},
+		{ModelID: "no-such-model"},
+	}
+	if _, err := NewWorkBuddyAgent(home).RemoveModels(context.Background(), refs, dataDir); !isAgentNotFound(err) {
+		t.Errorf("期望 4404,实际 %v", err)
+	}
+	if got := backupCount(t, dataDir, "workbuddy"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+	arr := readFixtureArray(t, home)
+	if len(arr) != 2 {
+		t.Errorf("校验失败后文件不得被改写,实际 %d 条", len(arr))
+	}
+}
+
+// TestWorkBuddy_RemoveModels_空refs_不落盘 空 refs 只读返回现状,不备份不写盘。
+func TestWorkBuddy_RemoveModels_空refs_不落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	entries, err := NewWorkBuddyAgent(home).RemoveModels(context.Background(), []agentconf.ModelRef{}, dataDir)
+	if err != nil {
+		t.Fatalf("空 refs 不应报错: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("空 refs 应返回现有清单,实际 %d 条", len(entries))
+	}
+	if got := backupCount(t, dataDir, "workbuddy"); got != 0 {
+		t.Errorf("空 refs 不应产生备份,实际 %d 份", got)
+	}
+}
+
+// TestWorkBuddy_AddModels_裸数组 裸数组形态:新条目恰含 5 键(url 为完整
+// endpoint)、追加保序、已存在跳过、既有条目 apiKey 零接触、备份产生。
+func TestWorkBuddy_AddModels_裸数组(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"new-model", "deepseek-v4-flash"},
+		Source: agentconf.ModelSource{
+			ProviderName: "来源接口",
+			EndpointURL:  "https://api.example.com/v1/chat/completions",
+			APIKey:       "sk-source-credential",
+		},
+	}
+	result, err := NewWorkBuddyAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	if len(result.Added) != 1 || result.Added[0] != "new-model" {
+		t.Errorf("added 应为 [new-model],实际 %v", result.Added)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0] != "deepseek-v4-flash" {
+		t.Errorf("skipped 应为 [deepseek-v4-flash],实际 %v", result.Skipped)
+	}
+	if _, ok := entryOfOK(result.Entries, "new-model"); !ok {
+		t.Error("最新清单应包含 new-model")
+	}
+	arr := readFixtureArray(t, home)
+	if len(arr) != 3 {
+		t.Fatalf("数组应追加到尾部共 3 条,实际 %d 条", len(arr))
+	}
+	m := fixtureElement(t, arr, 2)
+	// 新条目恰含 5 键
+	if len(m) != 5 {
+		t.Errorf("新条目应恰含 5 个键,实际 %d 个:%v", len(m), m)
+	}
+	for _, k := range []string{"id", "name", "vendor", "url", "apiKey"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("新条目缺少键 %s,实际 %v", k, m)
+		}
+	}
+	if stringOf(m["id"]) != "new-model" || stringOf(m["name"]) != "new-model" {
+		t.Errorf("id/name 应为模型 id,实际 %v / %v", m["id"], m["name"])
+	}
+	if stringOf(m["vendor"]) != "来源接口" {
+		t.Errorf("vendor 应取 Source.ProviderName,实际 %v", m["vendor"])
+	}
+	if stringOf(m["url"]) != "https://api.example.com/v1/chat/completions" {
+		t.Errorf("url 应为完整 endpoint,实际 %v", m["url"])
+	}
+	if stringOf(m["apiKey"]) != "sk-source-credential" {
+		t.Errorf("apiKey 应写入来源接口凭据,实际 %q", stringOf(m["apiKey"]))
+	}
+	// 既有条目 apiKey 零接触
+	if key := stringOf(fixtureElement(t, arr, 0)["apiKey"]); key != wbFixtureKey {
+		t.Errorf("既有条目 apiKey 必须零接触,实际 %q", key)
+	}
+	if got := backupCount(t, dataDir, "workbuddy"); got != 1 {
+		t.Errorf("添加写回应产生 1 份备份,实际 %d", got)
+	}
+}
+
+// TestWorkBuddy_AddModels_对象形态availableModels 对象形态:availableModels
+// 为数组且不含该 id 时追加;缺失时不创建该键。
+func TestWorkBuddy_AddModels_对象形态availableModels(t *testing.T) {
+	home := t.TempDir()
+	writeWorkBuddyFixture(t, home, `{
+		"availableModels": ["obj-a"],
+		"models": [{"id": "obj-a", "apiKey": "sk-obj-a"}]
+	}`)
+	source := agentconf.ModelSource{ProviderName: "来源", EndpointURL: "https://s/v1/chat/completions", APIKey: "sk-x"}
+
+	req := agentconf.AddModelsRequest{ModelIDs: []string{"obj-b"}, Source: source}
+	if _, err := NewWorkBuddyAgent(home).AddModels(context.Background(), req, t.TempDir()); err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	obj := readCodeBuddyStyleDoc(t, home)
+	if ids := stringSliceOf(obj["availableModels"]); len(ids) != 2 || ids[0] != "obj-a" || ids[1] != "obj-b" {
+		t.Errorf("availableModels 应为 [obj-a obj-b],实际 %v", ids)
+	}
+
+	// availableModels 缺失:追加条目但不创建该键
+	home2 := t.TempDir()
+	writeWorkBuddyFixture(t, home2, `{"models": []}`)
+	if _, err := NewWorkBuddyAgent(home2).AddModels(context.Background(), req, t.TempDir()); err != nil {
+		t.Fatalf("AddModels 失败: %v", err)
+	}
+	obj2 := readCodeBuddyStyleDoc(t, home2)
+	if _, exists := obj2["availableModels"]; exists {
+		t.Error("availableModels 缺失时不得凭空创建")
+	}
+	if arr := anySlice(obj2["models"]); len(arr) != 1 {
+		t.Errorf("models 应有 1 个新条目,实际 %v", arr)
+	}
+}
+
+// TestWorkBuddy_AddModels_全skip_零落盘 全部已存在时不备份不落盘。
+func TestWorkBuddy_AddModels_全skip_零落盘(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	req := agentconf.AddModelsRequest{
+		ModelIDs: []string{"deepseek-v4-flash", "second-model"},
+		Source:   agentconf.ModelSource{EndpointURL: "https://s/v1/chat/completions", APIKey: "sk-x"},
+	}
+	result, err := NewWorkBuddyAgent(home).AddModels(context.Background(), req, dataDir)
+	if err != nil {
+		t.Fatalf("全 skip 不应报错: %v", err)
+	}
+	if len(result.Added) != 0 || len(result.Skipped) != 2 {
+		t.Errorf("added/skipped 应为 0/2,实际 %v / %v", result.Added, result.Skipped)
+	}
+	if got := backupCount(t, dataDir, "workbuddy"); got != 0 {
+		t.Errorf("全 skip 不应产生备份,实际 %d 份", got)
+	}
+	if arr := readFixtureArray(t, home); len(arr) != 2 {
+		t.Errorf("全 skip 时文件不得被改写,实际 %d 条", len(arr))
+	}
+}
+
+// TestWorkBuddy_AddModels_model_ids空_4403 model_ids 为空报 4403 且零落盘。
+func TestWorkBuddy_AddModels_model_ids空_4403(t *testing.T) {
+	home := t.TempDir()
+	dataDir := t.TempDir()
+	writeWorkBuddyFixture(t, home, testModelsJSON)
+
+	_, err := NewWorkBuddyAgent(home).AddModels(context.Background(), agentconf.AddModelsRequest{}, dataDir)
+	if !isAgentInvalid(err) {
+		t.Errorf("期望 4403,实际 %v", err)
+	}
+	if got := backupCount(t, dataDir, "workbuddy"); got != 0 {
+		t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+	}
+}
+
+// TestWorkBuddy_增删_文件缺失_4404 配置文件缺失时增删均报 4404。
+func TestWorkBuddy_增删_文件缺失_4404(t *testing.T) {
+	agent := NewWorkBuddyAgent(t.TempDir())
+	if _, err := agent.RemoveModels(context.Background(), []agentconf.ModelRef{{ModelID: "m"}}, t.TempDir()); !isAgentNotFound(err) {
+		t.Errorf("RemoveModels 期望 4404,实际 %v", err)
+	}
+	if _, err := agent.AddModels(context.Background(), agentconf.AddModelsRequest{ModelIDs: []string{"m"}}, t.TempDir()); !isAgentNotFound(err) {
+		t.Errorf("AddModels 期望 4404,实际 %v", err)
+	}
+}
+
+// entryOfOK 按 modelId 取条目字段;不存在的返回 ok=false(非致命)。
+func entryOfOK(entries []agentconf.ModelEntry, modelID string) (map[string]any, bool) {
+	for _, e := range entries {
+		if e.ModelID == modelID {
+			return e.Fields, true
+		}
+	}
+	return nil, false
+}
+
+// readCodeBuddyStyleDoc 重新解析 WorkBuddy 写回结果为顶层对象(对象形态用)。
+func readCodeBuddyStyleDoc(t *testing.T, home string) map[string]any {
+	t.Helper()
+	obj, ok := readFixtureDoc(t, home).(map[string]any)
+	if !ok {
+		t.Fatalf("写回后的文件顶层不是对象")
+	}
+	return obj
+}

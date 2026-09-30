@@ -14,8 +14,20 @@
 // (access.apiKey)、templateId、manualProviderModelRules 及其他未知键原样保留,
 // 数字经 UseNumber 零精度丢失。追加规则节点前先查 manualProviderModelRules,
 // 同 (providerId, modelId) 已存在时改编辑该节点(zod 不允许两数组重复落键)。
-// map 键重编码后按字母序重排,JSON 语义零变化(沿用既有取舍)。供应商与
-// API Key 一律引导用户到 ZCode 原生工具管理。
+// map 键重编码后按字母序重排,JSON 语义零变化(沿用既有取舍)。
+//
+// 模型删除(RemoveModels):整体校验后一次备份一次写回——从对应供应商
+// config.modelOrder 与 config.personalModelIds 移除该 id,并清理
+// providerModelRules 中命中的规则节点;manualProviderModelRules 不动,
+// 供应商节点一律不删(清单变空也保留,供应商管理归 ZCode 原生工具)。
+//
+// 模型添加(AddModels)分两种落点:挂已有供应商时新 id 按输入顺序追加到该
+// 供应商 config.personalModelIds(数组缺失时创建),不写凭据、不创建规则节点;
+// 新建供应商时按 ZCode 自身惯例自动生成 providerId(new-provider、new-provider-2
+// ……取最小未用序号),追加最小合法个人供应商节点——节点只写已知键集,绝不写
+// templateId 或其他键(根对象与 config 均 zod strict,未知键会让 ZCode 拒载整份
+// 配置),该节点的 access.apiKey 来自 ModelMeter 数据库的接口记录,属"新增写入
+// 凭据"的显式例外(经用户界面确认),既有供应商的凭据仍然零接触。
 //
 // 默认模型写回(ApplyDefaultModel):provider_id+model_id 均空=清除、均非空=
 // 设置,写回前校验模型存在(4404)与推理档位取值(4403,规则未定义候选值则
@@ -32,6 +44,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/acooler15/modelmeter/internal/apperr"
@@ -75,6 +88,8 @@ const (
 // Snapshot 实现 Agent 接口:配置文件存在即 found,列描述的 reasoning_levels
 // 选项取自文件;ZCode 有"默认模型"概念,能力位恒置 true(能力是工具属性,
 // 文件缺失时同样成立),默认模型现状从 config.defaultModelSelection 宽容解析。
+// 增删模型能力位同理恒置 true;found 时携带可挂靠供应商清单(仅 id+显示名,
+// 不含任何凭据),not_found 时不携带。
 func (z *ZCodeAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	path := z.configPath()
 	if !agentconf.FileExists(path) {
@@ -85,9 +100,16 @@ func (z *ZCodeAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 			ConfigPath:           path,
 			Columns:              zcodeColumns(nil),
 			SupportsDefaultModel: true,
+			SupportsAddModels:    true,
+			SupportsRemoveModels: true,
 			Message: "未找到 ZCode 配置文件(~/.zcode/v2/provider_config.json)," +
 				"请确认 ZCode 已安装并至少运行过一次",
 		}
+	}
+	doc, err := z.readTree()
+	addTargets := []agentconf.AddTarget(nil)
+	if err == nil {
+		addTargets = collectZCodeAddTargets(doc)
 	}
 	return agentconf.Snapshot{
 		Name:                 z.Name(),
@@ -96,9 +118,23 @@ func (z *ZCodeAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 		ConfigPath:           path,
 		Columns:              zcodeColumns(z.collectReasoningLevels()),
 		SupportsDefaultModel: true,
+		SupportsAddModels:    true,
+		SupportsRemoveModels: true,
 		DefaultModel:         z.readDefaultModel(),
+		AddTargets:           addTargets,
 		Message:              zcodeManageHint,
 	}
+}
+
+// collectZCodeAddTargets 汇总可挂靠供应商清单(非敏感的 id+显示名),供添加
+// 模型时选择落点;顺序与 collectZCodeProviders 一致,缺名回退 id。
+func collectZCodeAddTargets(doc map[string]any) []agentconf.AddTarget {
+	providers := collectZCodeProviders(doc)
+	targets := make([]agentconf.AddTarget, 0, len(providers))
+	for _, p := range providers {
+		targets = append(targets, agentconf.AddTarget{ProviderID: p.id, ProviderName: p.name})
+	}
+	return targets
 }
 
 // zcodeColumns 模型表格列描述:可编辑列为启用开关、两个数字项与三个能力键,
@@ -164,6 +200,273 @@ func (z *ZCodeAgent) ApplyModels(ctx context.Context, patches []agentconf.ModelP
 	}
 	slog.Info("ZCode 模型配置已更新", "patches", len(patches), "fields", patchChangedKeys(patches))
 	return z.Models(ctx)
+}
+
+// RemoveModels 实现 Agent 接口:先整体校验全部定位(任一 (providerId, modelId)
+// 不在该供应商 modelOrder ∪ personalModelIds 时报 4404,整批拒绝避免半批生效),
+// 再一次备份、树编辑、原子写回,返回最新清单。空 refs 视为只读:不备份、不落盘,
+// 直接返回现状。供应商节点一律不删,manualProviderModelRules 不动。
+func (z *ZCodeAgent) RemoveModels(ctx context.Context, refs []agentconf.ModelRef, dataDir string) ([]agentconf.ModelEntry, error) {
+	doc, err := z.readTree()
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		// 空删除视为只读:不备份、不落盘,直接返回现状
+		return buildZCodeEntries(doc), nil
+	}
+	if err := validateZCodeRemoveTargets(doc, refs); err != nil {
+		return nil, err
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(z.configPath(), z.Name(), dataDir); err != nil {
+		return nil, apperr.Wrap(apperr.CodeAgentFileIO, "备份 ZCode 配置失败", err)
+	}
+	for _, ref := range refs {
+		removeZCodeModel(doc, ref.ProviderID, ref.ModelID)
+	}
+	if err := agentconf.WriteJSONFile(z.configPath(), doc); err != nil {
+		return nil, apperr.Wrap(apperr.CodeAgentFileIO, "写回 ZCode 配置失败", err)
+	}
+	// 日志只记删除数量与定位键,不记任何配置值
+	slog.Info("ZCode 模型已删除", "count", len(refs), "targets", refKeys(refs))
+	return z.Models(ctx)
+}
+
+// validateZCodeRemoveTargets 一次性校验全部删除定位:每个 (providerId, modelId)
+// 必须存在于对应供应商的模型清单,否则整批报 4404。先整体校验再落盘,避免半批生效。
+func validateZCodeRemoveTargets(doc map[string]any, refs []agentconf.ModelRef) error {
+	valid := make(map[zcodeRuleKey]bool)
+	for _, p := range collectZCodeProviders(doc) {
+		for _, id := range zcodeModelIDs(p) {
+			valid[zcodeRuleKey{p.id, id}] = true
+		}
+	}
+	for _, ref := range refs {
+		if !valid[zcodeRuleKey{ref.ProviderID, ref.ModelID}] {
+			return apperr.New(apperr.CodeAgentNotFound, "模型不存在:"+ref.ProviderID+" / "+ref.ModelID)
+		}
+	}
+	return nil
+}
+
+// removeZCodeModel 从树上移除一个模型定位:对应供应商 config.modelOrder 与
+// config.personalModelIds 中等于该 id 的元素全部移除(数组缺失则跳过对应步骤),
+// 并从 providerModelRules 移除 (providerId, modelId) 命中的规则节点;
+// manualProviderModelRules 不动,供应商节点(providerRules/providerOrder)不动。
+func removeZCodeModel(doc map[string]any, providerID, modelID string) {
+	for _, p := range collectZCodeProviders(doc) {
+		if p.id != providerID || p.config == nil {
+			continue
+		}
+		for _, key := range []string{"modelOrder", "personalModelIds"} {
+			if arr, ok := p.config[key].([]any); ok {
+				p.config[key] = removeStringValues(arr, modelID)
+			}
+		}
+		break // 校验阶段已保证供应商存在,命中即止
+	}
+	// 清理命中的规则节点;其余节点(含 manual 数组)原样保留
+	rules := zcodeRulesSlice(doc)
+	kept := make([]any, 0, len(rules))
+	for _, e := range rules {
+		m, ok := e.(map[string]any)
+		if ok && stringOf(m["providerId"]) == providerID && stringOf(m["modelId"]) == modelID {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) != len(rules) {
+		setZCodeRulesSlice(doc, kept)
+	}
+}
+
+// AddModels 实现 Agent 接口:逐条添加模型,已存在跳过,全部跳过时不备份不落盘。
+// Mode=existing(含空)把新 id 追加到目标供应商 config.personalModelIds(数组
+// 缺失时创建),不写凭据、不创建规则节点;Mode=new 按 ZCode 原生工具惯例自动
+// 生成 providerId 并追加最小合法个人供应商节点(含来源接口的 API Key,属"新增
+// 写入凭据"的显式例外),同时追加进 config.providerOrder。日志只记数量、落点
+// 模式与定位键,不记任何值。
+func (z *ZCodeAgent) AddModels(ctx context.Context, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
+	doc, err := z.readTree()
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	if len(req.ModelIDs) == 0 {
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid, "model_ids 不能为空")
+	}
+	switch req.Target.Mode {
+	case "", addTargetModeExisting:
+		return z.addModelsToExistingProvider(ctx, doc, req, dataDir)
+	case addTargetModeNew:
+		return z.addModelsByNewProvider(ctx, doc, req, dataDir)
+	default:
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid,
+			"target.mode 非法,仅支持 existing 或 new")
+	}
+}
+
+// addModelsToExistingProvider 挂已有供应商落点:目标供应商必须存在(4404),
+// 新 id 按输入顺序追加到其 config.personalModelIds(数组缺失时创建);不消费
+// Source(不写凭据、不创建规则节点)。
+func (z *ZCodeAgent) addModelsToExistingProvider(ctx context.Context, doc map[string]any, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
+	rule := locateZCodeProviderRule(doc, req.Target.ProviderID)
+	if rule == nil {
+		// 定位口径对齐读侧:以 providerRules 定义节点为准(providerOrder 未挂
+		// 规则节点的 id 无 config 载体,视为不存在)
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentNotFound, "目标供应商不存在:"+req.Target.ProviderID)
+	}
+	// 逐 id 判重:已在目标供应商清单(modelOrder ∪ personalModelIds)的跳过
+	cfg := mapGetObj(rule, "config")
+	existing := make(map[string]bool, 8)
+	for _, key := range []string{"modelOrder", "personalModelIds"} {
+		for _, id := range stringSliceOf(cfg[key]) {
+			existing[id] = true
+		}
+	}
+	added, skipped := splitAddIDs(req.ModelIDs, existing)
+	if len(added) == 0 {
+		// 全部已存在:零落盘直接返回,不产生备份
+		return agentconf.AddModelsResult{Entries: buildZCodeEntries(doc), Added: added, Skipped: skipped}, nil
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(z.configPath(), z.Name(), dataDir); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "备份 ZCode 配置失败", err)
+	}
+	ids := anySlice(cfg["personalModelIds"])
+	for _, id := range added {
+		ids = append(ids, id)
+	}
+	ensureMap(rule, "config")["personalModelIds"] = ids
+	if err := agentconf.WriteJSONFile(z.configPath(), doc); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "写回 ZCode 配置失败", err)
+	}
+	slog.Info("ZCode 模型已添加", "mode", addTargetModeExisting,
+		"count", len(added), "skipped", len(skipped), "provider_id", req.Target.ProviderID)
+	return z.addResult(ctx, added, skipped)
+}
+
+// addModelsByNewProvider 新建供应商落点:providerId 沿用 ZCode 原生工具惯例取
+// 最小未用序号,节点只写设计所列键集(根对象与 config 均 zod strict,未知键
+// 会让 ZCode 拒载整份配置,故绝不写 templateId 或其他键),追加进 providerRules
+// 与 providerOrder;规则节点不预置,既有供应商原样保留。该节点的 access.apiKey
+// 来自 ModelMeter 数据库装配的 Source,属"新增写入凭据"的显式例外。
+func (z *ZCodeAgent) addModelsByNewProvider(ctx context.Context, doc map[string]any, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
+	providerID := nextZCodeNewProviderID(doc)
+	apiType := req.Target.APIType
+	if apiType == "" {
+		apiType = zcodeAPITypeChat
+	}
+	if apiType != zcodeAPITypeChat && apiType != zcodeAPITypeResponses {
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid,
+			"target.api_type 非法,仅支持 "+zcodeAPITypeChat+" 或 "+zcodeAPITypeResponses)
+	}
+	// 逐 id 全量判重:所有供应商清单(modelOrder ∪ personalModelIds)中已存在
+	// 的 id 跳过——新建供应商模式下同 id 不允许重复挂在任何供应商上
+	existing := make(map[string]bool, 16)
+	for _, p := range collectZCodeProviders(doc) {
+		for _, id := range zcodeModelIDs(p) {
+			existing[id] = true
+		}
+	}
+	added, skipped := splitAddIDs(req.ModelIDs, existing)
+	if len(added) == 0 {
+		// 全部已存在:零落盘直接返回,不产生备份
+		return agentconf.AddModelsResult{Entries: buildZCodeEntries(doc), Added: added, Skipped: skipped}, nil
+	}
+	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
+	if _, err := agentconf.Backup(z.configPath(), z.Name(), dataDir); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "备份 ZCode 配置失败", err)
+	}
+	// 最小合法个人供应商节点:只写以下键集,规则节点不预置。providerName 两级
+	// 回退后仍为空时兜底为生成的 providerId,避免落空串显示名。
+	name := req.Target.ProviderName
+	if name == "" {
+		name = req.Source.ProviderName
+	}
+	if name == "" {
+		name = providerID
+	}
+	addedAny := make([]any, len(added))
+	for i, id := range added {
+		addedAny[i] = id
+	}
+	node := map[string]any{
+		"providerId":   providerID,
+		"providerName": name,
+		"enabled":      true,
+		"config": map[string]any{
+			"group":            "standard-personal",
+			"access":           map[string]any{"type": "api-key", "apiKey": req.Source.APIKey},
+			"api":              map[string]any{"type": apiType, "baseUrl": req.Source.BaseURL},
+			"modelOrder":       []any{},
+			"personalModelIds": addedAny,
+		},
+	}
+	cfg := ensureMap(doc, "config")
+	rules := append(anySlice(mapGetObj(cfg, "providerConfigRules")["providerRules"]), node)
+	ensureMap(cfg, "providerConfigRules")["providerRules"] = rules
+	cfg["providerOrder"] = append(anySlice(cfg["providerOrder"]), providerID)
+	if err := agentconf.WriteJSONFile(z.configPath(), doc); err != nil {
+		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "写回 ZCode 配置失败", err)
+	}
+	slog.Info("ZCode 模型已添加", "mode", addTargetModeNew,
+		"count", len(added), "skipped", len(skipped), "provider_id", providerID, "api_type", apiType)
+	return z.addResult(ctx, added, skipped)
+}
+
+// addResult 重新读取最新清单并组装添加结果;写回已成功,重读失败按文件 IO
+// 错误返回(与 ApplyModels 返回最新清单的口径一致)。
+func (z *ZCodeAgent) addResult(ctx context.Context, added, skipped []string) (agentconf.AddModelsResult, error) {
+	entries, err := z.Models(ctx)
+	if err != nil {
+		return agentconf.AddModelsResult{}, err
+	}
+	return agentconf.AddModelsResult{Entries: entries, Added: added, Skipped: skipped}, nil
+}
+
+// addTargetModeExisting / addTargetModeNew 添加模型的落点模式取值。
+const (
+	addTargetModeExisting = "existing"
+	addTargetModeNew      = "new"
+)
+
+// zcodeAPITypeChat / zcodeAPITypeResponses 新建供应商节点的合法 API 协议取值
+// (与既有真实配置中 config.api.type 的勘探结论一致)。
+const (
+	zcodeAPITypeChat      = "openai-chat-completions"
+	zcodeAPITypeResponses = "openai-responses"
+)
+
+// zcodeNewProviderPrefix ZCode 原生工具新建供应商的 providerId 惯例前缀。
+const zcodeNewProviderPrefix = "new-provider"
+
+// splitAddIDs 按 existing 集合把待添加 id 拆为新增与跳过两组:已存在的逐条
+// 跳过,其余按输入顺序返回;新增 id 顺带登记进 existing,天然处理请求内重复。
+func splitAddIDs(modelIDs []string, existing map[string]bool) (added, skipped []string) {
+	added = make([]string, 0, len(modelIDs))
+	for _, id := range modelIDs {
+		if existing[id] {
+			skipped = append(skipped, id)
+			continue
+		}
+		existing[id] = true
+		added = append(added, id)
+	}
+	return added, skipped
+}
+
+// refKeys 汇总删除定位键(仅 providerId/modelId,不含任何配置值)供日志使用。
+func refKeys(refs []agentconf.ModelRef) string {
+	keys := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref.ProviderID == "" {
+			keys = append(keys, ref.ModelID)
+			continue
+		}
+		keys = append(keys, ref.ProviderID+"/"+ref.ModelID)
+	}
+	return strings.Join(keys, ",")
 }
 
 // 默认模型写回动作(action 取值)。
@@ -587,6 +890,41 @@ func locateZCodeModelRule(doc map[string]any, providerID, modelID string) map[st
 		}
 	}
 	return locateZCodeManualRule(doc, providerID, modelID)
+}
+
+// locateZCodeProviderRule 在 providerRules 中按 id 定位供应商定义节点;未命中
+// 返回 nil。供添加模型的挂靠落点定位目标供应商(可向其 config 写
+// personalModelIds)与生成新 providerId 时扫描既有 id。
+func locateZCodeProviderRule(doc map[string]any, providerID string) map[string]any {
+	for _, e := range anySlice(mapGetObj(doc, "config", "providerConfigRules")["providerRules"]) {
+		if m, ok := e.(map[string]any); ok && stringOf(m["providerId"]) == providerID {
+			return m
+		}
+	}
+	return nil
+}
+
+// nextZCodeNewProviderID 生成新建供应商的 providerId:沿用 ZCode 原生工具的
+// 惯例命名 new-provider、new-provider-2、new-provider-3……扫描既有 providerRules
+// 取最小未占用序号。
+func nextZCodeNewProviderID(doc map[string]any) string {
+	used := make(map[string]bool, 8)
+	for _, e := range anySlice(mapGetObj(doc, "config", "providerConfigRules")["providerRules"]) {
+		if m, ok := e.(map[string]any); ok {
+			if id := stringOf(m["providerId"]); id != "" {
+				used[id] = true
+			}
+		}
+	}
+	if !used[zcodeNewProviderPrefix] {
+		return zcodeNewProviderPrefix
+	}
+	for i := 2; ; i++ {
+		id := zcodeNewProviderPrefix + "-" + strconv.Itoa(i)
+		if !used[id] {
+			return id
+		}
+	}
 }
 
 // applyZCodePatch 在树上定位 (providerId, modelId) 规则节点并应用白名单修改;
