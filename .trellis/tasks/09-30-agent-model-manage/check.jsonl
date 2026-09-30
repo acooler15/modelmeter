@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端评审清单:测试覆盖、禁止/必须模式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "核对错误码使用与信封一致性"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "专项核对日志无凭据"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端评审清单"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "核对 strict TS 与信封类型"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流核对:provider 凭据从 DB 到落盘的单一通路,响应/日志/错误三处无泄漏"}
+{"file": ".trellis/tasks/archive/2026-09/09-29-agentconf-realign/research.md", "reason": "核对 ZCode 写回符合真实 schema"}
+{"file": ".trellis/tasks/archive/2026-09/09-30-workbuddy-schema-realign/research.md", "reason": "核对 WorkBuddy 两形态与凭据零接触(既有条目)"}
+{"file": ".trellis/tasks/archive/2026-09/09-30-codebuddy-agent-conf/research.md", "reason": "核对 CodeBuddy 对象形态与 availableModels 同步"}

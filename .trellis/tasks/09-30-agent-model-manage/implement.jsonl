@@ -1,0 +1,15 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口,确认技术栈基线与语言约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "handler/service 分层与命名约定;新增适配器方法与 handler 须遵循"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "apperr 业务错误码与统一 JSON 信封;新路由的 4402/4403/4404/1404 分支须对齐"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "slog 结构化日志红线;删除/添加日志只记数量与定位键,绝不落凭据"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "AgentModelsAdd 需从 providers 表读取接口记录(含 APIKey)装配 ModelSource"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试要求与禁止/必须模式;适配器新增删能力须配单测"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范入口"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "src 布局与 api/views/components/composables 分工;新增两个组件与 api 封装的落位"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "script setup 结构、props/emits、样式约定;tab 化与两个新弹窗组件须遵循"}
+{"file": ".trellis/spec/frontend/composable-guidelines.md", "reason": "useRequest 数据请求模式;新增删除/添加 API 调用沿用统一失败提示"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "strict TS 与 API 信封类型;新增类型禁止 any"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "lint/类型检查要求与评审清单"}
+{"file": ".trellis/tasks/archive/2026-09/09-29-agentconf-realign/research.md", "reason": "ZCode provider_config.json 真实 schema:personalModelIds=自定义模型清单、modelOrder=显示顺序、access.apiKey 零接触"}
+{"file": ".trellis/tasks/archive/2026-09/09-30-workbuddy-schema-realign/research.md", "reason": "WorkBuddy models.json 两形态、条目 apiKey 明文与 WBEF1、availableModels 按 id 过滤可用模型——添加/删除须兼容"}
+{"file": ".trellis/tasks/archive/2026-09/09-30-codebuddy-agent-conf/research.md", "reason": "CodeBuddy models.json 仅对象形态、条目 schema、availableModels 仅影响可见性——新增条目与 availableModels 同步的依据"}
