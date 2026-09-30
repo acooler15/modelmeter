@@ -89,6 +89,8 @@ export interface AgentModelRef {
 export interface AgentAddTarget {
   provider_id: string
   provider_name?: string
+  /** 供应商 config.api.baseUrl(非敏感);前端据此按 URL 一致性过滤落点候选。 */
+  base_url?: string
 }
 
 /** ZCode 落点规格;WorkBuddy/CodeBuddy 整体忽略(前端直接省略该字段)。 */

@@ -1201,6 +1201,7 @@ func TestZCode_AddModels_挂已有供应商(t *testing.T) {
 
 	req := agentconf.AddModelsRequest{
 		ModelIDs: []string{"new-model-a", "deepseek-chat", "new-model-b"},
+		Source:   agentconf.ModelSource{BaseURL: "https://api.example.com/v1"},
 		Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: "deepseek"},
 	}
 	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
@@ -1273,6 +1274,7 @@ func TestZCode_AddModels_挂靠_全skip_零落盘(t *testing.T) {
 
 	req := agentconf.AddModelsRequest{
 		ModelIDs: []string{"deepseek-chat", "my-custom-model"},
+		Source:   agentconf.ModelSource{BaseURL: "https://api.example.com/v1"},
 		Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: "deepseek"},
 	}
 	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
@@ -1284,6 +1286,74 @@ func TestZCode_AddModels_挂靠_全skip_零落盘(t *testing.T) {
 	}
 	if got := backupCount(t, dataDir, "zcode"); got != 0 {
 		t.Errorf("全 skip 不应产生备份,实际 %d 份", got)
+	}
+}
+
+// TestZCode_AddModels_挂靠_URL一致性校验 验证 existing 落点的 URL 一致性强校验:
+// 归一化相等(仅尾斜杠/首尾空白差异)放行且行为与现状一致(不写凭据);
+// URL 不一致、目标 baseUrl 缺失、来源 BaseURL 为空均报 4403,且不产生备份、
+// 配置文件零改动(无备份,apiKey 与 personalModelIds 原样)。
+func TestZCode_AddModels_挂靠_URL一致性校验(t *testing.T) {
+	cases := []struct {
+		name      string
+		sourceURL string
+		targetID  string
+		wantErr   bool
+	}{
+		{"归一化相等_尾斜杠差异", "https://api.example.com/v1/", "deepseek", false},
+		{"归一化相等_首尾空白", " https://api.example.com/v1 ", "deepseek", false},
+		{"URL不一致", "https://other.example.com/v1", "deepseek", true},
+		{"目标baseUrl缺失", "https://api.example.com/v1", "new-provider-7", true},
+		{"来源BaseURL为空", "", "deepseek", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			dataDir := t.TempDir()
+			writeZCodeFixture(t, home, testProviderConfig)
+
+			req := agentconf.AddModelsRequest{
+				ModelIDs: []string{"m-url-1"},
+				Source:   agentconf.ModelSource{BaseURL: tc.sourceURL},
+				Target:   agentconf.AddTargetSpec{Mode: "existing", ProviderID: tc.targetID},
+			}
+			_, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
+			if tc.wantErr {
+				if !isAgentInvalid(err) {
+					t.Fatalf("期望 4403,实际 %v", err)
+				}
+				if got := backupCount(t, dataDir, "zcode"); got != 0 {
+					t.Errorf("校验失败不得产生备份,实际 %d 份", got)
+				}
+				// 文件零改动:apiKey 原样;deepseek 落点另断言 personalModelIds 未追加
+				doc := readFixtureTree(t, home)
+				if key := stringOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config", "access")["apiKey"]); key != fixtureKey {
+					t.Errorf("apiKey 必须原样保留,实际 %q", key)
+				}
+				if tc.targetID == "deepseek" {
+					ids := stringSliceOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")["personalModelIds"])
+					if len(ids) != 2 || ids[0] != "deepseek-reasoner" || ids[1] != "my-custom-model" {
+						t.Errorf("校验失败不得改写 personalModelIds,实际 %v", ids)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("归一化相等不应报错: %v", err)
+			}
+			// 成功路径:追加生效,且行为与现状一致(apiKey 零接触、不产生多余备份)
+			doc := readFixtureTree(t, home)
+			ids := stringSliceOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")["personalModelIds"])
+			if len(ids) != 3 || ids[2] != "m-url-1" {
+				t.Errorf("personalModelIds 应追加 m-url-1,实际 %v", ids)
+			}
+			if key := stringOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config", "access")["apiKey"]); key != fixtureKey {
+				t.Errorf("apiKey 必须原样保留,实际 %q", key)
+			}
+			if got := backupCount(t, dataDir, "zcode"); got != 1 {
+				t.Errorf("挂靠写回应产生 1 份备份,实际 %d", got)
+			}
+		})
 	}
 }
 
@@ -1520,7 +1590,8 @@ func TestZCode_AddModels_参数非法_4403(t *testing.T) {
 }
 
 // TestZCode_Snapshot_增删能力位与AddTargets 验证:增删能力位恒置 true(含
-// 文件缺失);found 时 AddTargets 携带全部供应商(id+显示名),not_found 时不携带。
+// 文件缺失);found 时 AddTargets 携带全部供应商(id+显示名+接口地址 baseUrl,
+// 残缺供应商 baseUrl 留空),not_found 时不携带。
 func TestZCode_Snapshot_增删能力位与AddTargets(t *testing.T) {
 	home := t.TempDir()
 	writeZCodeFixture(t, home, testProviderConfig)
@@ -1534,8 +1605,14 @@ func TestZCode_Snapshot_增删能力位与AddTargets(t *testing.T) {
 	if snap.AddTargets[0].ProviderID != "deepseek" || snap.AddTargets[0].ProviderName != "DeepSeek" {
 		t.Errorf("AddTargets[0] 解析错误,实际 %+v", snap.AddTargets[0])
 	}
+	if snap.AddTargets[0].BaseURL != "https://api.example.com/v1" {
+		t.Errorf("AddTargets[0] 应携带 config.api.baseUrl,实际 %q", snap.AddTargets[0].BaseURL)
+	}
 	if snap.AddTargets[1].ProviderID != "new-provider-7" || snap.AddTargets[1].ProviderName != "新供应商" {
 		t.Errorf("AddTargets[1] 缺名应回退 id,实际 %+v", snap.AddTargets[1])
+	}
+	if snap.AddTargets[1].BaseURL != "" {
+		t.Errorf("残缺供应商的 baseUrl 应留空,实际 %q", snap.AddTargets[1].BaseURL)
 	}
 	// 快照不得包含凭据内容
 	snapJSON, err := json.Marshal(snap)

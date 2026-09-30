@@ -21,8 +21,11 @@
 // providerModelRules 中命中的规则节点;manualProviderModelRules 不动,
 // 供应商节点一律不删(清单变空也保留,供应商管理归 ZCode 原生工具)。
 //
-// 模型添加(AddModels)分两种落点:挂已有供应商时新 id 按输入顺序追加到该
-// 供应商 config.personalModelIds(数组缺失时创建),不写凭据、不创建规则节点;
+// 模型添加(AddModels)分两种落点:挂已有供应商时先校验来源接口 URL 与落点
+// 供应商 config.api.baseUrl 归一化一致(去首尾空白+去尾斜杠,任一侧为空或不
+// 相等报 4403、不备份不落盘——ZCode 用落点自己的 URL/Key 调模型,URL 不同必
+// 然调不通),通过后新 id 按输入顺序追加到该供应商 config.personalModelIds
+// (数组缺失时创建),不写凭据、不创建规则节点;
 // 新建供应商时按 ZCode 自身惯例自动生成 providerId(new-provider、new-provider-2
 // ……取最小未用序号),追加最小合法个人供应商节点——节点只写已知键集,绝不写
 // templateId 或其他键(根对象与 config 均 zod strict,未知键会让 ZCode 拒载整份
@@ -88,8 +91,8 @@ const (
 // Snapshot 实现 Agent 接口:配置文件存在即 found,列描述的 reasoning_levels
 // 选项取自文件;ZCode 有"默认模型"概念,能力位恒置 true(能力是工具属性,
 // 文件缺失时同样成立),默认模型现状从 config.defaultModelSelection 宽容解析。
-// 增删模型能力位同理恒置 true;found 时携带可挂靠供应商清单(仅 id+显示名,
-// 不含任何凭据),not_found 时不携带。
+// 增删模型能力位同理恒置 true;found 时携带可挂靠供应商清单(仅 id+显示名+
+// 接口地址 baseUrl,不含任何凭据),not_found 时不携带。
 func (z *ZCodeAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	path := z.configPath()
 	if !agentconf.FileExists(path) {
@@ -126,13 +129,15 @@ func (z *ZCodeAgent) Snapshot(_ context.Context) agentconf.Snapshot {
 	}
 }
 
-// collectZCodeAddTargets 汇总可挂靠供应商清单(非敏感的 id+显示名),供添加
-// 模型时选择落点;顺序与 collectZCodeProviders 一致,缺名回退 id。
+// collectZCodeAddTargets 汇总可挂靠供应商清单(非敏感的 id+显示名+接口地址
+// baseUrl),供添加模型时按 URL 过滤与选择落点;baseUrl 取供应商
+// config.api.baseUrl(collectZCodeProviders 已按同口径解析),缺失时留空。
+// 顺序与 collectZCodeProviders 一致,缺名回退 id。
 func collectZCodeAddTargets(doc map[string]any) []agentconf.AddTarget {
 	providers := collectZCodeProviders(doc)
 	targets := make([]agentconf.AddTarget, 0, len(providers))
 	for _, p := range providers {
-		targets = append(targets, agentconf.AddTarget{ProviderID: p.id, ProviderName: p.name})
+		targets = append(targets, agentconf.AddTarget{ProviderID: p.id, ProviderName: p.name, BaseURL: p.baseURL})
 	}
 	return targets
 }
@@ -307,14 +312,32 @@ func (z *ZCodeAgent) AddModels(ctx context.Context, req agentconf.AddModelsReque
 }
 
 // addModelsToExistingProvider 挂已有供应商落点:目标供应商必须存在(4404),
-// 新 id 按输入顺序追加到其 config.personalModelIds(数组缺失时创建);不消费
-// Source(不写凭据、不创建规则节点)。
+// 来源接口 URL 必须与目标供应商 config.api.baseUrl 归一化一致(4403,任一侧
+// 为空同样拒绝、文案区分缺哪一侧),通过后新 id 按输入顺序追加到其
+// config.personalModelIds(数组缺失时创建);不写 Source 凭据、不创建规则节点。
 func (z *ZCodeAgent) addModelsToExistingProvider(ctx context.Context, doc map[string]any, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
 	rule := locateZCodeProviderRule(doc, req.Target.ProviderID)
 	if rule == nil {
 		// 定位口径对齐读侧:以 providerRules 定义节点为准(providerOrder 未挂
 		// 规则节点的 id 无 config 载体,视为不存在)
 		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentNotFound, "目标供应商不存在:"+req.Target.ProviderID)
+	}
+	// URL 一致性校验(先于判重/备份/落盘):归一化口径见 normalizeBaseURL,
+	// 与前端落点候选过滤共用。ZCode 用落点供应商自己的 URL/Key 调用模型,把
+	// 模型挂到 URL 不同的供应商上必然调不通,故从后端强校验,防止绕过前端的
+	// 直连请求;校验失败不备份、不落盘,文案与日志均不出现 URL 值。
+	targetURL := normalizeBaseURL(stringOf(mapGetObj(rule, "config", "api")["baseUrl"]))
+	sourceURL := normalizeBaseURL(req.Source.BaseURL)
+	switch {
+	case targetURL == "":
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid,
+			"目标供应商未配置接口地址,无法确认与来源接口一致,请改用「新建供应商」落点")
+	case sourceURL == "":
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid,
+			"来源接口缺少 Base URL,无法确认与目标供应商一致,请改用「新建供应商」落点")
+	case targetURL != sourceURL:
+		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid,
+			"目标供应商的接口地址与来源接口不一致,请改用「新建供应商」落点")
 	}
 	// 逐 id 判重:已在目标供应商清单(modelOrder ∪ personalModelIds)的跳过
 	cfg := mapGetObj(rule, "config")
@@ -430,6 +453,13 @@ const (
 	addTargetModeExisting = "existing"
 	addTargetModeNew      = "new"
 )
+
+// normalizeBaseURL 接口地址的归一化口径(仅用于一致性比较):去除首尾空白 +
+// 去除全部尾部 "/",其余逐字符精确比较——不做大小写/协议归一,保守处理;
+// 前端 AgentImportModelsDialog 的 normalizeBaseUrl 与此同口径,两侧改动须同步。
+func normalizeBaseURL(v string) string {
+	return strings.TrimRight(strings.TrimSpace(v), "/")
+}
 
 // zcodeAPITypeChat / zcodeAPITypeResponses 新建供应商节点的合法 API 协议取值
 // (与既有真实配置中 config.api.type 的勘探结论一致)。

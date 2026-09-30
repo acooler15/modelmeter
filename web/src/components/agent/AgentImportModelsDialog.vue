@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 从接口添加模型弹窗:选择接口 → 拉取模型列表 → 多选/全选 → 确认接口地址
 // (WorkBuddy/CodeBuddy 提示后端将派生的完整 endpoint)→ ZCode 选择落点
-// (挂已有供应商或新建供应商)→ 二次确认(涉凭据写入的路径明确警示)→ 提交。
+// (候选按 URL 一致性过滤:仅显示与有效接口地址一致的既有供应商,或新建供应商)
+// → 二次确认(涉凭据写入的路径明确警示)→ 提交。
 // 凭据不经过前端:请求体只含接口 ID,后端从接口记录装配,响应不含 key。
 // 接口列表来自共享 providers store;派生 endpoint 的提示与后端
 // llmclient.BuildURL 口径一致,实际派生在后端。
@@ -54,7 +55,9 @@ watch(
     baseUrl.value = ''
     selectedRows.value = []
     models.value = undefined
-    targetKey.value = props.snapshot.add_targets?.[0]?.provider_id ?? NEW_TARGET
+    // 未选来源接口前不存在"URL 一致"的事实,落点恒初始化为「新建供应商…」,
+    // 不再预选 add_targets[0](选接口后由 candidateTargets 联动按需回落)
+    targetKey.value = NEW_TARGET
     newProviderName.value = ''
     apiType.value = 'openai-chat-completions'
     void providersStore.load()
@@ -88,6 +91,37 @@ const derivedEndpoint = computed(() => {
   const base = effectiveBase.value.replace(/\/+$/, '')
   const path = base.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions'
   return base + path
+})
+
+/**
+ * 归一化接口地址用于落点候选过滤:去首尾空白 + 去尾部 "/",
+ * 与后端 agents 包 normalizeBaseURL 同口径(保守:不做大小写/协议归一),
+ * 两侧改动须同步。
+ */
+function normalizeBaseUrl(v: string): string {
+  return v.trim().replace(/\/+$/, '')
+}
+
+/**
+ * 落点候选:仅保留归一化 base_url 与有效接口地址一致的既有供应商——ZCode
+ * 用落点供应商自己的 URL/Key 调用模型,URL 不同的落点根本不显示,从源头
+ * 避免挂错;有效地址为空时无任何既有候选。「新建供应商…」选项恒在(见模板)。
+ */
+const candidateTargets = computed(() => {
+  const base = normalizeBaseUrl(effectiveBase.value)
+  if (!base) return []
+  return (props.snapshot.add_targets ?? []).filter(
+    (target) => normalizeBaseUrl(target.base_url ?? '') === base,
+  )
+})
+
+// 有效接口地址变化(选择接口、修改「接口地址」输入)后联动落点选择:
+// 当前已选落点被过滤掉时回落到候选第一项,候选为空则回落「新建供应商…」。
+watch(candidateTargets, (candidates) => {
+  if (isTargetNew.value) return
+  if (!candidates.some((target) => target.provider_id === targetKey.value)) {
+    targetKey.value = candidates[0]?.provider_id ?? NEW_TARGET
+  }
 })
 
 /** 提交可用性:已选接口与模型;ZCode 挂靠模式必须已选落点。 */
@@ -201,13 +235,17 @@ async function handleConfirm() {
       </el-form-item>
       <template v-if="isZcode">
         <el-form-item label="添加到" required>
+          <!-- 候选已按 URL 一致性过滤,option 副文本展示落点 baseUrl 供确认 -->
           <el-select v-model="targetKey" placeholder="请选择落点">
             <el-option
-              v-for="target in snapshot.add_targets ?? []"
+              v-for="target in candidateTargets"
               :key="target.provider_id"
               :label="target.provider_name || target.provider_id"
               :value="target.provider_id"
-            />
+            >
+              <span>{{ target.provider_name || target.provider_id }}</span>
+              <span class="provider-url">{{ target.base_url }}</span>
+            </el-option>
             <el-option label="新建供应商…" :value="NEW_TARGET" />
           </el-select>
         </el-form-item>

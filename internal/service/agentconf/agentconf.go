@@ -110,9 +110,12 @@ type ModelRef struct {
 }
 
 // AddTarget ZCode 添加模型的可挂靠供应商(非敏感字段,Snapshot 携带)。
+// BaseURL 来自落点供应商 config.api.baseUrl,供前端按 URL 过滤落点候选;
+// 与 provider_name 同级为非敏感字段,但与凭据同样不进日志。
 type AddTarget struct {
 	ProviderID   string `json:"provider_id"`
 	ProviderName string `json:"provider_name,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
 }
 
 // ModelSource 添加模型的来源接口信息;handler 从数据库的 provider 记录装配,
