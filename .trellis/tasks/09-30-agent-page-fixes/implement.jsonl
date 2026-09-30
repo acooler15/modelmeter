@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层与规范总入口"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端禁止/必须模式与测试要求"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范总入口"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 lint/类型检查门禁与禁止模式"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "AgentFieldInput/AgentModelCard 组件改动需遵循组件规范"}
+{"file": ".trellis/tasks/archive/2026-09/09-29-zcode-default-model/research.md", "reason": "ZCode provider_config.json schema 与 optionSpecs 值域勘探"}
+{"file": ".trellis/tasks/archive/2026-09/09-30-workbuddy-schema-realign/research.md", "reason": "WorkBuddy models.json schema 勘探(reasoning 节点缺省语义)"}
