@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/09-30-zcode-add-target-url-filter/prd.md", "reason": "需求与验收口径:落点按 URL 过滤、归一化口径、错误文案与测试范围"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "4403(CodeAgentInvalid)语义与 apperr 包装约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志红线:URL/key 等配置值不进日志"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端禁止/必须模式与测试要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "AgentImportModelsDialog 组件改造遵循组件约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "AgentAddTarget 类型扩展与可选字段口径"}

@@ -100,6 +100,25 @@ create one owner for:
 
 Rendering code may format fields, but it must not redefine the payload contract.
 
+### Mistake 5: 共享口径的双端实现分叉
+
+**Bad**: 同一口径(归一化、校验规则、URL 拼接等)在后端与前端各写一份实现,
+注释互不引用、测试互不覆盖——一侧改动后另一侧静默漂移,展示过滤与提交校验
+口径错位,前端放行后端拒绝(或反之)。
+
+**Good**: 双端实现逐字符等价,双侧注释互相声明「与对端同口径、改动须同步」,
+并用测试锁定分叉场景(尾斜杠、空白、空值)。
+
+**Rule**: 只要同一口径出现在两层(如后端 `normalizeBaseURL` 与前端
+`normalizeBaseUrl`),实现前先写一份口径文字(允许哪些差异、空值如何处理),
+双侧注释引用它;比较基准也要对齐同一来源值(如前端 effectiveBase 镜像后端
+handler 装配 Source.BaseURL 的「trim 非空才覆盖记录值」口径)。
+
+**Real-world example**: ZCode 添加模型落点按 URL 过滤(任务
+09-30-zcode-add-target-url-filter):前端按归一化 URL 过滤落点候选、后端在
+existing 落点做同口径一致性校验,双侧归一化(去首尾空白+去尾部 `/`)逐字符
+等价并互注同步要求,空值两侧同为拒绝/不显示,口径闭环。
+
 ---
 
 ## Checklist for Cross-Layer Features
@@ -120,6 +139,9 @@ After implementation:
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
+- [ ] Checked that any caliber implemented on both backend and frontend
+      (normalization, validation, URL assembly) is character-equivalent and
+      cross-referenced in comments on both sides
 
 ---
 
