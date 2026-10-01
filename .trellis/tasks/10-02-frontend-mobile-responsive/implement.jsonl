@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范总览与技术栈基线(Vue3 setup + EP 按需导入),实现前先读"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "本次大量 <script setup> 结构、scoped 样式与模板改动,需遵循组件/样式/可访问性约定"}
+{"file": ".trellis/spec/frontend/composable-guidelines.md", "reason": "新增 useIsMobile composable,需符合组合式函数编写模式"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "composables 目录归属与命名约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "strict TS 与禁止 any,新增 composable 的类型要求"}

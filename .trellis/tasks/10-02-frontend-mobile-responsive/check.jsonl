@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "lint/类型检查要求与禁止/必须模式、评审清单"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "核查组件结构、scoped 样式与中文注释是否符合约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "核查新增代码类型安全(禁 any、只读 ref)"}
+{"file": ".trellis/tasks/10-02-frontend-mobile-responsive/design.md", "reason": "对照设计核查:断点策略、各文件改动点、桌面端回归零变更"}

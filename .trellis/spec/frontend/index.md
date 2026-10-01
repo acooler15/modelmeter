@@ -26,6 +26,7 @@ Element Plus(按需自动导入)+ vue-router + Pinia**。构建产物输出到
 | [状态管理](./state-management.md) | Pinia setup store、状态分类与提升标准 | 已填写 |
 | [类型安全](./type-safety.md) | strict TS、API 信封类型、禁止 any | 已填写 |
 | [质量规范](./quality-guidelines.md) | lint/类型检查、禁止/必须模式、评审清单 | 已填写 |
+| [移动端适配](./mobile-adaptation.md) | 768px 断点、useIsMobile、响应式绑定与懒加载 CSS 陷阱 | 已填写 |
 
 ---
 

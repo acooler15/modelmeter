@@ -69,3 +69,6 @@ const { data: meters, loading, error, run } = useRequest(listMeters)
 - composable 内部 `setTimeout`/`addEventListener` 后不清理。
 - 在 composable 模块顶层创建共享 ref 导致所有组件共用一份状态 ——
   共享状态应放 Pinia,composable 只在函数体内创建状态。
+  **例外**:`useIsMobile`(视口判断)是刻意的模块级单例 —— 视口是
+  设备能力而非业务状态,全应用共享一份 matchMedia 监听是目的本身,
+  详见 [移动端适配](./mobile-adaptation.md)。
