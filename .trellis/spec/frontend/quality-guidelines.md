@@ -34,6 +34,12 @@
 - 错误提示统一 `ElMessage.error`(由 `useRequest` 触发),不在组件里
   各写一套。
 - 新依赖需证明现有依赖无法实现,并在任务记录中说明理由;保持依赖面小。
+- 凭据值(API Key 等)在界面展示一律走「默认打码 + 显式切换 + 点击复制」
+  交互:打码用 `src/utils/mask.ts` 的 `maskKey`,口径与后端 `MaskKey`
+  一致(≤8 全 `*`,否则前3+`****`+后4),任一方调整须双端同步;复制优先
+  Clipboard API(`writeText` 需用户激活且文档聚焦,失败先聚焦重试一次),
+  非安全上下文降级隐藏 textarea + `execCommand('copy')`,成功/失败均给
+  中文提示。
 
 ---
 

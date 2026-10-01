@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "校验 lint/build 与禁止模式"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "校验类型安全实现"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "校验组件交互实现约定"}

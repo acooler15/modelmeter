@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "maskKey 纯函数的落位目录与命名约定"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ProviderList.vue 组件写法、按钮/消息交互约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "strict TS、事件收窄、禁止 any"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 lint/类型检查与禁止模式"}
