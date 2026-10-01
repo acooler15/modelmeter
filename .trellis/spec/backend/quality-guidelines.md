@@ -91,6 +91,14 @@
   发起的新增」路径**(如 agentconf 从接口导入模型):凭据从自家数据库经
   单一装配点传入适配器落盘(`ModelSource`),响应体、日志、错误信息三处
   都不得出现凭据值;既有条目的凭据仍零接触(不读取、不回传、不回写)。
+- **嵌入式前端(web/dist 经 go:embed)的缓存头契约**:embed.FS 没有
+  Last-Modified/ETag,协商缓存不可用。入口页(index.html 及一切 SPA 回退
+  响应)必须 `Cache-Control: no-cache`——入口页是浏览器发现新 hash JS 的
+  唯一路径,被启发式缓存后升级表现为「改了没生效」,需用户手动强刷;
+  `assets/` 前缀产物文件名含内容 hash,一律
+  `Cache-Control: public, max-age=31536000, immutable` 长缓存。参考实现:
+  `internal/web/web.go`(serveIndex 与 assets 分支),测试 `web_test.go`
+  与实现共用同一常量锁口径。
 - **为注册表式接口增加可选能力时,用「能力接口 + 能力位」协商**:可选
   方法定义为独立接口(如 agentconf 的 `DefaultModelSetter`),状态视图
   (Snapshot)暴露布尔能力位,handler 用类型断言探测能力、未实现报专用

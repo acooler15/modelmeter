@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "禁止/必须模式;收尾需在此沉淀缓存头契约"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "internal/web 包的分层位置与命名约束"}
