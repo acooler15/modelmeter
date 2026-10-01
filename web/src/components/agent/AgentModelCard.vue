@@ -19,6 +19,7 @@ import {
   setDefaultAgentModel,
   updateAgentModels,
 } from '@/api/agent'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { useRequest } from '@/composables/useRequest'
 import type {
   AgentAddModelsResult,
@@ -31,6 +32,9 @@ import type {
 } from '@/types/agent'
 
 const props = defineProps<{ snapshot: AgentSnapshot }>()
+
+// 窄屏判定:编辑弹窗全屏化、表单标签置顶
+const isMobile = useIsMobile()
 
 // 写回成功后配置状态可能变化,父级需刷新 Agent 列表;providerCreated 表示
 // ZCode 新建了供应商(落点候选 add_targets 已变化),同样需要父级重拉列表
@@ -528,9 +532,14 @@ onMounted(() => {
       </div>
     </template>
 
-    <!-- 编辑弹窗:按可编辑列渲染表单,确定即提交单行 patch -->
-    <el-dialog v-model="editVisible" title="编辑模型" width="560px">
-      <el-form label-width="110px">
+    <!-- 编辑弹窗:按可编辑列渲染表单,确定即提交单行 patch;窄屏全屏化 -->
+    <el-dialog
+      v-model="editVisible"
+      title="编辑模型"
+      width="560px"
+      :fullscreen="isMobile"
+    >
+      <el-form label-width="110px" :label-position="isMobile ? 'top' : 'right'">
         <el-form-item v-for="col in editableColumns" :key="col.key" :label="col.label">
           <AgentFieldInput
             :col="col"
@@ -624,6 +633,19 @@ onMounted(() => {
 
 .dm-select {
   width: 220px;
+}
+
+/* 窄屏:操作按钮区允许多行堆叠,默认模型三级下拉占满可用行宽
+ * (.default-model-row 已有 flex-wrap,拉满宽度后自然逐行堆叠) */
+@media (max-width: 768px) {
+  .card-actions {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .dm-select {
+    width: 100%;
+  }
 }
 
 .field-help {

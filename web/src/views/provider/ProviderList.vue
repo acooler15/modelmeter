@@ -14,10 +14,14 @@ import {
   deleteProvider,
   updateProvider,
 } from '@/api/provider'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { useRequest } from '@/composables/useRequest'
 import { useProvidersStore } from '@/stores/providers'
 import type { ProviderInput, ProviderView } from '@/types/provider'
 import { maskKey } from '@/utils/mask'
+
+// 窄屏判定:弹窗全屏化、表单标签置顶
+const isMobile = useIsMobile()
 
 // 列表数据来自共享 store;本页写操作成功后用 force 刷新,保证与其他页面同源
 const providersStore = useProvidersStore()
@@ -262,8 +266,15 @@ onMounted(() => {
       v-model="dialogVisible"
       :title="editing ? '编辑接口配置' : '新增接口配置'"
       width="480px"
+      :fullscreen="isMobile"
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        label-width="90px"
+        :label-position="isMobile ? 'top' : 'right'"
+      >
         <el-form-item label="名称" prop="name">
           <el-input v-model="form.name" placeholder="例如:OpenAI 官方" maxlength="100" />
         </el-form-item>

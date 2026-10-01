@@ -25,3 +25,32 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+
+/* 窄屏(≤768px)适配:跨页面共性模式集中在此;断点与 useIsMobile 保持一致,
+ * 组件私有的固定 px 宽度在各组件 scoped 媒体查询内处理,不在此处污染 */
+@media (max-width: 768px) {
+  /* 主区默认 20px 内边距收窄,提升有效内容宽度。
+   * 用 body 前缀提升特异性:EP 基础规则随异步 chunk 在运行时后注入,
+   * 同级特异性会被反超,必须做到与注入顺序无关 */
+  body .el-main {
+    padding: 12px;
+  }
+
+  /* 卡片内边距收窄,特异性处理同上 */
+  body .el-card__body {
+    padding: 12px;
+  }
+
+  /* 卡片头/工具栏(标题+按钮、下拉+搜索+按钮等 flex 行)允许换行堆叠,
+   * 避免窄屏横向溢出;row-gap 保证换行后行间距 */
+  .card-header,
+  .toolbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  /* MessageBox 默认 420px,窄屏按视口收窄防溢出(!important 同样顺序无关) */
+  .el-message-box {
+    width: calc(100vw - 24px) !important;
+  }
+}

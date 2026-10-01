@@ -10,12 +10,16 @@ import { computed, ref, watch } from 'vue'
 
 import { addAgentModels } from '@/api/agent'
 import { fetchModels } from '@/api/modelCatalog'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { useRequest } from '@/composables/useRequest'
 import { useProvidersStore } from '@/stores/providers'
 import type { AgentAddModelsPayload, AgentAddModelsResult, AgentSnapshot } from '@/types/agent'
 import type { ModelInfo } from '@/types/model'
 
 const props = defineProps<{ snapshot: AgentSnapshot; visible: boolean }>()
+
+// 窄屏判定:全项目最宽弹窗(640px)在移动端全屏化,表单标签置顶
+const isMobile = useIsMobile()
 
 const emit = defineEmits<{
   'update:visible': [value: boolean]
@@ -182,9 +186,10 @@ async function handleConfirm() {
     :model-value="visible"
     :title="`从接口添加模型到 ${snapshot.display_name}`"
     width="640px"
+    :fullscreen="isMobile"
     @update:model-value="emit('update:visible', $event)"
   >
-    <el-form label-width="90px">
+    <el-form label-width="90px" :label-position="isMobile ? 'top' : 'right'">
       <el-form-item label="选择接口" required>
         <el-select
           v-model="providerId"
@@ -225,7 +230,7 @@ async function handleConfirm() {
       <div class="selection-hint">已选 {{ orderedSelectedIds.length }} 个模型(表头可全选)</div>
     </template>
 
-    <el-form label-width="90px" class="option-form">
+    <el-form label-width="90px" :label-position="isMobile ? 'top' : 'right'" class="option-form">
       <el-form-item label="接口地址">
         <el-input v-model="baseUrl" placeholder="留空则使用接口配置的 Base URL" />
         <!-- WorkBuddy/CodeBuddy 的 url 是完整 endpoint 语义;ZCode 忽略该概念 -->

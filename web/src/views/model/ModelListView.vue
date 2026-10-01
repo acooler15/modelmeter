@@ -188,6 +188,18 @@ onMounted(() => {
   margin-left: auto;
 }
 
+/* 窄屏:下拉与搜索框占满可用行宽,控件逐行堆叠,按钮行随全局 flex-wrap 换行 */
+@media (max-width: 768px) {
+  .provider-select,
+  .keyword-input {
+    width: 100%;
+  }
+
+  .keyword-input {
+    margin-left: 0;
+  }
+}
+
 .error-alert {
   margin-bottom: 16px;
 }

@@ -10,8 +10,12 @@ import {
   getNewAPIConfig,
   saveNewAPIConfig,
 } from '@/api/newapi'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { useRequest } from '@/composables/useRequest'
 import type { NewAPIConfigView } from '@/types/newapi'
+
+// 窄屏判定:配置表单标签置顶
+const isMobile = useIsMobile()
 
 // 配置:进入页面拉取一次;保存成功后刷新视图并尝试拉取费率表
 const config = ref<NewAPIConfigView | null>(null)
@@ -116,6 +120,7 @@ onMounted(async () => {
         :model="configForm"
         :rules="rules"
         label-width="110px"
+        :label-position="isMobile ? 'top' : 'right'"
         class="config-form"
       >
         <el-form-item label="网关地址" prop="base_url">
@@ -226,6 +231,8 @@ onMounted(async () => {
 .configured-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+  /* 长 URL 提示允许折行,不撑爆容器(对桌面端无副作用) */
+  word-break: break-all;
 }
 
 .config-form {
@@ -239,6 +246,13 @@ onMounted(async () => {
 
 .filter-input {
   width: 220px;
+}
+
+/* 窄屏:过滤输入框占满可用行宽,与刷新按钮随全局换行规则堆叠 */
+@media (max-width: 768px) {
+  .filter-input {
+    width: 100%;
+  }
 }
 
 .rates-error {

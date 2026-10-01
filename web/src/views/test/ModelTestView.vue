@@ -9,11 +9,15 @@ import { useRouter } from 'vue-router'
 import { fetchModels } from '@/api/modelCatalog'
 import { estimateCost } from '@/api/newapi'
 import { clearRecords, fetchRecords, runTest } from '@/api/modelTest'
+import { useIsMobile } from '@/composables/useIsMobile'
 import { useRequest } from '@/composables/useRequest'
 import { isAbortError, useTestStream } from '@/composables/useTestStream'
 import { useProvidersStore } from '@/stores/providers'
 import type { CostEstimate } from '@/types/newapi'
 import type { TestProtocol, TestRecord, TestResult } from '@/types/test'
+
+// 窄屏判定:表单标签置顶、结果 descriptions 降为 1 列、详情弹窗全屏
+const isMobile = useIsMobile()
 
 const router = useRouter()
 const providersStore = useProvidersStore()
@@ -237,7 +241,12 @@ onMounted(() => {
       </el-empty>
 
       <template v-else>
-        <el-form label-width="130px" :disabled="testing" class="test-form">
+        <el-form
+          label-width="130px"
+          :label-position="isMobile ? 'top' : 'right'"
+          :disabled="testing"
+          class="test-form"
+        >
           <el-form-item label="接口配置">
             <el-select
               v-model="form.providerId"
@@ -342,7 +351,7 @@ onMounted(() => {
       />
       <template v-else>
         <pre class="reply">{{ currentReply }}</pre>
-        <el-descriptions v-if="result" :column="3" border size="small" class="metrics">
+        <el-descriptions v-if="result" :column="isMobile ? 1 : 3" border size="small" class="metrics">
           <el-descriptions-item label="首字延迟">
             {{ result.first_latency_ms }} ms
           </el-descriptions-item>
@@ -417,9 +426,9 @@ onMounted(() => {
       </el-table>
     </el-card>
 
-    <!-- 记录详情:完整回复与当时的参数快照 -->
-    <el-dialog v-model="detailVisible" title="测试详情" width="680px">
-      <el-descriptions v-if="detailRecord" :column="2" border size="small">
+    <!-- 记录详情:完整回复与当时的参数快照;窄屏全屏化并将描述列表降为 1 列 -->
+    <el-dialog v-model="detailVisible" title="测试详情" width="680px" :fullscreen="isMobile">
+      <el-descriptions v-if="detailRecord" :column="isMobile ? 1 : 2" border size="small">
         <el-descriptions-item label="时间">
           {{ formatTime(detailRecord.created_at) }}
         </el-descriptions-item>
@@ -495,6 +504,13 @@ onMounted(() => {
 
 .provider-select {
   width: 260px;
+}
+
+/* 窄屏:接口配置下拉占满可用行宽(模型行 .model-row 本身弹性布局,无需处理) */
+@media (max-width: 768px) {
+  .provider-select {
+    width: 100%;
+  }
 }
 
 .model-row {
