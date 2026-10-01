@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "校验响应体日志错误信息泄端口径与例外边界"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "校验日志无 Key 明文"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "校验类型同步与收窄实现"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "校验前端 lint/build 通过"}

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "凭据脱敏约定与本次明文例外决策相关;DTO 序列化约定需遵守"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "service/handler 分层与命名约束"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志不得出现凭据明文,写路径日志保持布尔字段"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "ProviderView 类型同步、strict TS、运行时收窄要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "ProviderList.vue 表格列与组件写法约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 lint/类型检查与禁止模式"}
