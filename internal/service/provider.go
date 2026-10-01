@@ -23,18 +23,21 @@ type ProviderInput struct {
 	APIKey  string `json:"api_key"`
 }
 
-// ProviderView 接口配置的对外视图:只含脱敏后的 Key,不含任何明文凭据。
+// ProviderView 接口配置的对外视图。API Key 按产品决策(2026-10-01)明文回显:
+// 本项目为本地单用户工具,凭据由用户自录自见,这是"对外一律脱敏视图"规范的
+// 有意例外;New API 令牌与 Agent 模型清单凭据仍走脱敏视图,不受此例外影响。
 type ProviderView struct {
-	ID           uint      `json:"id"`
-	Name         string    `json:"name"`
-	BaseURL      string    `json:"base_url"`
-	APIKeyMasked string    `json:"api_key_masked"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID        uint      `json:"id"`
+	Name      string    `json:"name"`
+	BaseURL   string    `json:"base_url"`
+	APIKey    string    `json:"api_key"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // MaskKey 对 API Key 脱敏:长度不超过 8 位时全部替换为 '*',
 // 否则保留前 3 位与后 4 位,中间固定输出 '****'。
+// 接口配置视图已改为明文回显,该函数目前仅用于 New API 令牌的脱敏展示。
 func MaskKey(key string) string {
 	if len(key) <= 8 {
 		return strings.Repeat("*", len(key))
@@ -42,16 +45,17 @@ func MaskKey(key string) string {
 	return key[:3] + "****" + key[len(key)-4:]
 }
 
-// toProviderView 把模型转换为脱敏视图;这是唯一允许接触明文 Key 的出口,
-// 且转换结果只含脱敏值。
+// toProviderView 把模型转换为对外视图;API Key 按新契约明文回显(用户自见
+// 凭据的有意例外)。它仍是读路径上唯一接触明文 Key 的出口,写请求、日志与
+// 错误信息路径不得输出明文。
 func toProviderView(p model.Provider) ProviderView {
 	return ProviderView{
-		ID:           p.ID,
-		Name:         p.Name,
-		BaseURL:      p.BaseURL,
-		APIKeyMasked: MaskKey(p.APIKey),
-		CreatedAt:    p.CreatedAt,
-		UpdatedAt:    p.UpdatedAt,
+		ID:        p.ID,
+		Name:      p.Name,
+		BaseURL:   p.BaseURL,
+		APIKey:    p.APIKey,
+		CreatedAt: p.CreatedAt,
+		UpdatedAt: p.UpdatedAt,
 	}
 }
 

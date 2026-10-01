@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 接口配置页:管理站点名称、Base URL 与 API Key 的增删改查。
-// Key 一律脱敏展示;编辑时留空表示沿用原 Key;错误提示由 useRequest 统一处理。
+// 列表按产品决策明文展示完整 Key;编辑时留空表示沿用原 Key、不回填明文;
+// 错误提示由 useRequest 统一处理。
 // 列表数据源为 providers store(与模型列表页共享);写操作各自持有 loading,
 // 失败时均由 useRequest 统一弹中文提示。
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
@@ -50,7 +51,7 @@ function isProviderRow(x: unknown): x is ProviderView {
     'id' in x &&
     'name' in x &&
     'base_url' in x &&
-    'api_key_masked' in x &&
+    'api_key' in x &&
     'updated_at' in x
   )
 }
@@ -131,7 +132,7 @@ onMounted(() => {
     <el-table v-else v-loading="listLoading" :data="providers">
       <el-table-column prop="name" label="名称" min-width="140" />
       <el-table-column prop="base_url" label="Base URL" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="api_key_masked" label="API Key" min-width="140" />
+      <el-table-column prop="api_key" label="API Key" min-width="220" show-overflow-tooltip />
       <el-table-column label="更新时间" min-width="170">
         <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
       </el-table-column>

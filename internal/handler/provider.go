@@ -32,7 +32,8 @@ func bindProviderInput(c *gin.Context) (service.ProviderInput, error) {
 	return in, nil
 }
 
-// ProviderList GET /api/providers 接口配置列表:按创建时间正序,Key 只返回脱敏值。
+// ProviderList GET /api/providers 接口配置列表:按创建时间正序,
+// API Key 按产品决策明文回显(本地单用户工具,用户自见凭据)。
 func ProviderList(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		views, err := service.ListProviders(c.Request.Context(), db)

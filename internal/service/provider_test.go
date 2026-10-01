@@ -92,8 +92,8 @@ func TestCreateProvider_名称重复报1402(t *testing.T) {
 	wantCode(t, err, apperr.CodeProviderDuplicate)
 }
 
-// TestCreateProvider_成功返回脱敏视图 验证视图字段与"响应不含明文 Key"。
-func TestCreateProvider_成功返回脱敏视图(t *testing.T) {
+// TestCreateProvider_成功返回明文视图 验证视图字段与"响应按新契约明文回显 Key"。
+func TestCreateProvider_成功返回明文视图(t *testing.T) {
 	db := newProviderTestDB(t)
 	view, err := CreateProvider(context.Background(), db, ProviderInput{
 		Name: "官方站", BaseURL: "https://api.example.com", APIKey: "sk-abcdef123456",
@@ -104,16 +104,19 @@ func TestCreateProvider_成功返回脱敏视图(t *testing.T) {
 	if view.ID == 0 || view.Name != "官方站" || view.BaseURL != "https://api.example.com" {
 		t.Fatalf("视图字段不符: %+v", view)
 	}
-	if view.APIKeyMasked != "sk-****3456" {
-		t.Fatalf("期望脱敏值 sk-****3456,实际 %q", view.APIKeyMasked)
+	if view.APIKey != "sk-abcdef123456" {
+		t.Fatalf("期望明文 Key sk-abcdef123456,实际 %q", view.APIKey)
 	}
-	// 序列化结果中不允许出现明文 Key
+	// 序列化结果中 api_key 字段必须是完整明文,且不再有 api_key_masked 字段
 	data, err := json.Marshal(view)
 	if err != nil {
 		t.Fatalf("序列化失败: %v", err)
 	}
-	if strings.Contains(string(data), "sk-abcdef123456") {
-		t.Fatalf("序列化结果泄露明文 Key: %s", data)
+	if !strings.Contains(string(data), `"api_key":"sk-abcdef123456"`) {
+		t.Fatalf("序列化结果未按明文回显 api_key: %s", data)
+	}
+	if strings.Contains(string(data), "api_key_masked") {
+		t.Fatalf("序列化结果不应再含 api_key_masked 字段: %s", data)
 	}
 }
 
@@ -138,8 +141,8 @@ func TestUpdateProvider_空Key保留原值(t *testing.T) {
 	if kept.Name != "官方站改名" || kept.BaseURL != "https://api2.example.com" {
 		t.Fatalf("编辑结果不符: %+v", kept)
 	}
-	if kept.APIKeyMasked != "sk-****3456" {
-		t.Fatalf("期望沿用原 Key 的脱敏值,实际 %q", kept.APIKeyMasked)
+	if kept.APIKey != "sk-abcdef123456" {
+		t.Fatalf("期望沿用原 Key 明文回显,实际 %q", kept.APIKey)
 	}
 	// 落库值必须仍是原 Key
 	var stored model.Provider
@@ -157,8 +160,8 @@ func TestUpdateProvider_空Key保留原值(t *testing.T) {
 	if err != nil {
 		t.Fatalf("编辑应成功,实际报错: %v", err)
 	}
-	if replaced.APIKeyMasked != "sk-****9999" {
-		t.Fatalf("期望新 Key 的脱敏值,实际 %q", replaced.APIKeyMasked)
+	if replaced.APIKey != "sk-zzzzzzzz9999" {
+		t.Fatalf("期望新 Key 明文回显,实际 %q", replaced.APIKey)
 	}
 }
 
