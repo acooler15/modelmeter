@@ -99,6 +99,17 @@
   `Cache-Control: public, max-age=31536000, immutable` 长缓存。参考实现:
   `internal/web/web.go`(serveIndex 与 assets 分支),测试 `web_test.go`
   与实现共用同一常量锁口径。
+- **agentconf 添加模型的判重口径按目标工具的数据模型区分,不得一刀切**:
+  先确认目标工具的模型定位键,再定判重范围。ZCode 有供应商层,模型规则按
+  `(providerId, modelId)` 二元组定位、`personalModelIds` 每供应商各一份,
+  跨供应商同 ID 合法——Mode=new(新建供应商)只做请求内去重(`splitAddIDs`
+  传空集合,同 id 可挂多个供应商,与 ZCode 原生能力一致),Mode=existing 按
+  目标供应商自身清单判重;WorkBuddy/CodeBuddy 无供应商层,单个 models 扁平
+  数组中模型 ID 即主键(编辑按首个同 id 条目定位、availableModels 为纯 id
+  列表、运行时按 id 选模型),同 ID 不同端点在其数据模型里无法表达,按 id
+  判重是语义必需,不得当成人为限制"放宽"。参考实现:agents/zcode.go 的
+  `addModelsByNewProvider` / `addModelsToExistingProvider`(2026-10-02 移除
+  Mode=new 跨供应商全量判重,任务 10-02-zcode-new-provider-dup-model-id)。
 - **为注册表式接口增加可选能力时,用「能力接口 + 能力位」协商**:可选
   方法定义为独立接口(如 agentconf 的 `DefaultModelSetter`),状态视图
   (Snapshot)暴露布尔能力位,handler 用类型断言探测能力、未实现报专用

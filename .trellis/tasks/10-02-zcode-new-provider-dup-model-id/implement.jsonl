@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端规范入口:分层约定与开发前检查清单"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "改动涉及 apperr 业务错误码路径(4403/4404 分支保留与文案)"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "添加模型日志红线:不记 URL/Key 值"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试要求与禁止模式,指导判重移除后的用例改写"}
