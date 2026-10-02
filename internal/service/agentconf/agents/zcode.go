@@ -30,7 +30,10 @@
 // 然调不通),通过后新 id 按输入顺序追加到该供应商 config.personalModelIds
 // (数组缺失时创建),不写凭据、不创建规则节点;
 // 新建供应商时按 ZCode 自身惯例自动生成 providerId(new-provider、new-provider-2
-// ……取最小未用序号),追加最小合法个人供应商节点——节点只写已知键集,绝不写
+// ……取最小未用序号),不做跨供应商全量判重——新建供应商自身清单为空,不存在
+// 内部冲突,同 id 允许挂在不同供应商上(与 ZCode 原生能力一致,模型规则按
+// (providerId, modelId) 二元组定位),所选 id 全部挂入新供应商,仅请求内重复 id
+// 去重;追加最小合法个人供应商节点——节点只写已知键集,绝不写
 // templateId 或其他键(根对象与 config 均 zod strict,未知键会让 ZCode 拒载整份
 // 配置),该节点的 access.apiKey 来自 ModelMeter 数据库的接口记录,属"新增写入
 // 凭据"的显式例外(经用户界面确认),既有供应商的凭据仍然零接触。
@@ -289,12 +292,15 @@ func removeZCodeModel(doc map[string]any, providerID, modelID string) {
 	}
 }
 
-// AddModels 实现 Agent 接口:逐条添加模型,已存在跳过,全部跳过时不备份不落盘。
-// Mode=existing(含空)把新 id 追加到目标供应商 config.personalModelIds(数组
-// 缺失时创建),不写凭据、不创建规则节点;Mode=new 按 ZCode 原生工具惯例自动
-// 生成 providerId 并追加最小合法个人供应商节点(含来源接口的 API Key,属"新增
-// 写入凭据"的显式例外),同时追加进 config.providerOrder。日志只记数量、落点
-// 模式与定位键,不记任何值。
+// AddModels 实现 Agent 接口:逐条添加模型。Mode=existing(含空)按目标供应商
+// 自身清单判重,已存在跳过、全部跳过时不备份不落盘,通过后新 id 按输入顺序
+// 追加到目标供应商 config.personalModelIds(数组缺失时创建),不写凭据、不创建
+// 规则节点;Mode=new 不做跨供应商全量判重——新建供应商自身清单为空,不存在
+// 内部冲突,同 id 允许挂在不同供应商上(与 ZCode 原生能力一致,模型规则按
+// (providerId, modelId) 二元组定位),仅请求内重复 id 去重,所选 id 全部追加,
+// 按 ZCode 原生工具惯例自动生成 providerId 并追加最小合法个人供应商节点(含
+// 来源接口的 API Key,属"新增写入凭据"的显式例外),同时追加进
+// config.providerOrder。日志只记数量、落点模式与定位键,不记任何值。
 func (z *ZCodeAgent) AddModels(ctx context.Context, req agentconf.AddModelsRequest, dataDir string) (agentconf.AddModelsResult, error) {
 	doc, err := z.readTree()
 	if err != nil {
@@ -372,7 +378,11 @@ func (z *ZCodeAgent) addModelsToExistingProvider(ctx context.Context, doc map[st
 	return z.addResult(ctx, added, skipped)
 }
 
-// addModelsByNewProvider 新建供应商落点:providerId 沿用 ZCode 原生工具惯例取
+// addModelsByNewProvider 新建供应商落点:不做跨供应商全量判重——新建供应商
+// 自身清单为空,不存在内部冲突,同 id 允许挂在不同供应商上(与 ZCode 原生能力
+// 对齐,模型规则按 (providerId, modelId) 二元组定位,各供应商 personalModelIds
+// 独立),所选 id 全部追加进新建供应商,仅请求内重复 id 由 splitAddIDs 去重。
+// providerId 沿用 ZCode 原生工具惯例取
 // 最小未用序号,节点只写设计所列键集(根对象与 config 均 zod strict,未知键
 // 会让 ZCode 拒载整份配置,故绝不写 templateId 或其他键),追加进 providerRules
 // 与 providerOrder;规则节点不预置,既有供应商原样保留。该节点的 access.apiKey
@@ -387,19 +397,10 @@ func (z *ZCodeAgent) addModelsByNewProvider(ctx context.Context, doc map[string]
 		return agentconf.AddModelsResult{}, apperr.New(apperr.CodeAgentInvalid,
 			"target.api_type 非法,仅支持 "+zcodeAPITypeChat+" 或 "+zcodeAPITypeResponses)
 	}
-	// 逐 id 全量判重:所有供应商清单(modelOrder ∪ personalModelIds)中已存在
-	// 的 id 跳过——新建供应商模式下同 id 不允许重复挂在任何供应商上
-	existing := make(map[string]bool, 16)
-	for _, p := range collectZCodeProviders(doc) {
-		for _, id := range zcodeModelIDs(p) {
-			existing[id] = true
-		}
-	}
-	added, skipped := splitAddIDs(req.ModelIDs, existing)
-	if len(added) == 0 {
-		// 全部已存在:零落盘直接返回,不产生备份
-		return agentconf.AddModelsResult{Entries: buildZCodeEntries(doc), Added: added, Skipped: skipped}, nil
-	}
+	// 判重集合传空:不与既有供应商清单比较,仅由 splitAddIDs 登记已加入 id,
+	// 兜底请求内重复只加一次。ModelIDs 非空已在 AddModels 校验,故 added 恒非空,
+	// 不存在"全部已存在零落盘"分支。
+	added, skipped := splitAddIDs(req.ModelIDs, map[string]bool{})
 	// 备份先于写回:任何写回动作前必须先留一份可还原的副本
 	if _, err := agentconf.Backup(z.configPath(), z.Name(), dataDir); err != nil {
 		return agentconf.AddModelsResult{}, apperr.Wrap(apperr.CodeAgentFileIO, "备份 ZCode 配置失败", err)

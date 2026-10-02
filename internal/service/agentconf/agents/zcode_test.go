@@ -1486,7 +1486,8 @@ const newProviderSeqFixture = `{
 // TestZCode_AddModels_新建供应商 验证:providerId 取最小未用序号、节点恰为
 // 设计所列键集(无 templateId 等未知键)、api.type 空缺省 chat-completions、
 // providerOrder 追加、新模型挂入 personalModelIds、apiKey 写入 Source 值、
-// 既有供应商零接触。
+// 既有供应商零接触;不做跨供应商全量判重——deepseek-chat 已挂在 deepseek 下,
+// 仍可挂入新建供应商(added 含它、skipped 恒为空)。
 func TestZCode_AddModels_新建供应商(t *testing.T) {
 	home := t.TempDir()
 	dataDir := t.TempDir()
@@ -1505,12 +1506,13 @@ func TestZCode_AddModels_新建供应商(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddModels 失败: %v", err)
 	}
-	// deepseek-chat 已在 deepseek 清单中,全量判重跳过
-	if len(result.Added) != 2 || result.Added[0] != "m-new-1" || result.Added[1] != "m-new-2" {
-		t.Errorf("added 应为 [m-new-1 m-new-2],实际 %v", result.Added)
+	// 不做跨供应商全量判重:deepseek-chat 已在 deepseek 清单中,仍全部追加,
+	// 新建供应商自身清单为空、不存在内部冲突,skipped 恒为空
+	if len(result.Added) != 3 || result.Added[0] != "m-new-1" || result.Added[1] != "deepseek-chat" || result.Added[2] != "m-new-2" {
+		t.Errorf("added 应为 [m-new-1 deepseek-chat m-new-2],实际 %v", result.Added)
 	}
-	if len(result.Skipped) != 1 || result.Skipped[0] != "deepseek-chat" {
-		t.Errorf("skipped 应为 [deepseek-chat],实际 %v", result.Skipped)
+	if len(result.Skipped) != 0 {
+		t.Errorf("Mode=new 下 skipped 应恒为空,实际 %v", result.Skipped)
 	}
 
 	doc := readFixtureTree(t, home)
@@ -1560,12 +1562,13 @@ func TestZCode_AddModels_新建供应商(t *testing.T) {
 	if bu := stringOf(mapGetObj(cfg, "api")["baseUrl"]); bu != "https://source.example.com/v1" {
 		t.Errorf("api.baseUrl 应取 Source.BaseURL,实际 %q", bu)
 	}
-	// modelOrder 为空数组,personalModelIds 为新增 id 按输入顺序
+	// modelOrder 为空数组,personalModelIds 为新增 id 按输入顺序(含与既有
+	// 供应商同 id 的 deepseek-chat)
 	if mo := anySlice(cfg["modelOrder"]); len(mo) != 0 {
 		t.Errorf("modelOrder 应为空数组,实际 %v", mo)
 	}
-	if ids := stringSliceOf(cfg["personalModelIds"]); len(ids) != 2 || ids[0] != "m-new-1" || ids[1] != "m-new-2" {
-		t.Errorf("personalModelIds 应为 [m-new-1 m-new-2],实际 %v", ids)
+	if ids := stringSliceOf(cfg["personalModelIds"]); len(ids) != 3 || ids[0] != "m-new-1" || ids[1] != "deepseek-chat" || ids[2] != "m-new-2" {
+		t.Errorf("personalModelIds 应为 [m-new-1 deepseek-chat m-new-2],实际 %v", ids)
 	}
 	// 追加进 providerOrder 尾部,既有供应商零接触
 	order := stringSliceOf(mapGetObj(doc, "config")["providerOrder"])
@@ -1575,12 +1578,19 @@ func TestZCode_AddModels_新建供应商(t *testing.T) {
 	if key := stringOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config", "access")["apiKey"]); key != fixtureKey {
 		t.Errorf("既有供应商 apiKey 必须零接触,实际 %q", key)
 	}
+	// 既有供应商的模型清单同样零接触:deepseek 的 personalModelIds 原样
+	if ids := stringSliceOf(mapGetObj(fixtureProviderRule(t, doc, "deepseek"), "config")["personalModelIds"]); len(ids) != 2 || ids[0] != "deepseek-reasoner" || ids[1] != "my-custom-model" {
+		t.Errorf("既有供应商 personalModelIds 必须零接触,实际 %v", ids)
+	}
 	if got := backupCount(t, dataDir, "zcode"); got != 1 {
 		t.Errorf("新建供应商写回应产生 1 份备份,实际 %d", got)
 	}
-	// 返回的最新清单包含新供应商下的新模型
+	// 返回的最新清单包含新供应商下的新模型(含与既有供应商同 id 的 deepseek-chat)
 	if _, ok := entryFieldsOfOK(result.Entries, "new-provider", "m-new-1"); !ok {
 		t.Error("最新清单应包含 new-provider / m-new-1")
+	}
+	if _, ok := entryFieldsOfOK(result.Entries, "new-provider", "deepseek-chat"); !ok {
+		t.Error("最新清单应包含 new-provider / deepseek-chat(同 id 允许挂多个供应商)")
 	}
 }
 
@@ -1638,30 +1648,37 @@ func TestZCode_AddModels_新建供应商_apiType非法_4403(t *testing.T) {
 	}
 }
 
-// TestZCode_AddModels_新建供应商_全skip_零落盘 新增 id 已挂在任意供应商时
-// 逐条跳过,全部跳过不备份不落盘。
-func TestZCode_AddModels_新建供应商_全skip_零落盘(t *testing.T) {
+// TestZCode_AddModels_新建供应商_请求内重复只加一次 同一请求内重复的 model_ids
+// 只添加一次(splitAddIDs 登记已加入 id 兜底去重);重复的第二次出现沿用
+// splitAddIDs 共用语义计入 skipped(与 WorkBuddy/CodeBuddy 口径一致),
+// personalModelIds 中不重复写入。
+func TestZCode_AddModels_新建供应商_请求内重复只加一次(t *testing.T) {
 	home := t.TempDir()
 	dataDir := t.TempDir()
 	writeZCodeFixture(t, home, testProviderConfig)
 
 	req := agentconf.AddModelsRequest{
-		ModelIDs: []string{"deepseek-chat", "my-custom-model"},
+		ModelIDs: []string{"m-dup", "m-dup", "m-other"},
 		Source:   agentconf.ModelSource{BaseURL: "https://s.example.com", APIKey: "sk-x"},
-		Target:   agentconf.AddTargetSpec{Mode: "new"},
+		Target:   agentconf.AddTargetSpec{Mode: "new", ProviderName: "重复请求"},
 	}
 	result, err := NewZCodeAgent(home).AddModels(context.Background(), req, dataDir)
 	if err != nil {
-		t.Fatalf("全 skip 不应报错: %v", err)
+		t.Fatalf("AddModels 失败: %v", err)
 	}
-	if len(result.Added) != 0 || len(result.Skipped) != 2 {
-		t.Errorf("added/skipped 应为 0/2,实际 %v / %v", result.Added, result.Skipped)
+	if len(result.Added) != 2 || result.Added[0] != "m-dup" || result.Added[1] != "m-other" {
+		t.Errorf("added 应为 [m-dup m-other],实际 %v", result.Added)
 	}
-	if got := backupCount(t, dataDir, "zcode"); got != 0 {
-		t.Errorf("全 skip 不应产生备份,实际 %d 份", got)
+	if len(result.Skipped) != 1 || result.Skipped[0] != "m-dup" {
+		t.Errorf("请求内重复的第二次出现应计入 skipped [m-dup],实际 %v", result.Skipped)
 	}
-	if _, exists := fixtureProviderRuleOK(readFixtureTree(t, home), "new-provider"); exists {
-		t.Error("全 skip 时不得新建供应商节点")
+	doc := readFixtureTree(t, home)
+	cfg := mapGetObj(fixtureProviderRule(t, doc, "new-provider"), "config")
+	if ids := stringSliceOf(cfg["personalModelIds"]); len(ids) != 2 || ids[0] != "m-dup" || ids[1] != "m-other" {
+		t.Errorf("personalModelIds 应为 [m-dup m-other],实际 %v", ids)
+	}
+	if got := backupCount(t, dataDir, "zcode"); got != 1 {
+		t.Errorf("写回应产生 1 份备份,实际 %d", got)
 	}
 }
 
