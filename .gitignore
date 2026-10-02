@@ -9,3 +9,6 @@ web/node_modules/
 web/dist/*
 # 保留占位文件,保证前端首次构建前 go:embed 也能编译通过
 !web/dist/.gitkeep
+
+# ZCode 本地插件与工作区配置(含本机绝对路径,不入库)
+.zcode/
